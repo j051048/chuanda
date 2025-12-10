@@ -42,11 +42,9 @@ const getClient = (settings?: AppSettings) => {
       apiKey = process.env?.API_KEY;
     }
 
-    // 2. Sanitize Key (CRITICAL for 400 errors)
+    // 2. Sanitize Key
     if (apiKey) {
-      // Remove invisible characters, newlines, and strict trim
       apiKey = apiKey.replace(/[\u200B-\u200D\uFEFF]/g, '').trim(); 
-      // Remove common prefixes people copy-paste
       if (apiKey.toLowerCase().startsWith('bearer ')) {
         apiKey = apiKey.substring(7).trim();
       }
@@ -61,22 +59,27 @@ const getClient = (settings?: AppSettings) => {
     const clientConfig: any = { apiKey };
     
     // 3. 处理 Base URL (Strict Mode Logic)
-    // ONLY use Base URL if mode is 'custom'. If 'official', keep it undefined.
     if (settings?.mode === 'custom' && settings?.baseUrl && settings.baseUrl.trim() !== "") {
       let url = settings.baseUrl.trim();
       
-      // Safety check: even in custom mode, if user puts official URL, ignore it to prevent path errors
-      if (url.includes('generativelanguage.googleapis.com')) {
-         // Do nothing
-      } else {
-          // Remove trailing slash
+      // Ignore official Google URL to prevent conflicts
+      if (!url.includes('generativelanguage.googleapis.com')) {
+          
+          // CRITICAL FIX: Detect version from URL suffix
+          // Many 3rd party providers (OneAPI) expect 'v1' but SDK defaults to 'v1beta'
+          if (url.endsWith('/v1') || url.endsWith('/v1/')) {
+            clientConfig.apiVersion = 'v1'; // Force SDK to use v1
+            url = url.replace(/\/v1\/?$/, ''); // Strip it from base
+          } else if (url.endsWith('/v1beta') || url.endsWith('/v1beta/')) {
+            clientConfig.apiVersion = 'v1beta'; // Force SDK to use v1beta
+            url = url.replace(/\/v1beta\/?$/, ''); // Strip it from base
+          }
+
+          // Clean trailing slash
           if (url.endsWith('/')) {
             url = url.slice(0, -1);
           }
-          // Remove version suffix if user accidentally added it (SDK adds it)
-          if (url.endsWith('/v1beta') || url.endsWith('/v1')) {
-             url = url.replace(/\/v1(beta)?$/, '');
-          }
+          
           clientConfig.baseUrl = url;
       }
     }
@@ -104,8 +107,11 @@ export const testConnection = async (settings: AppSettings): Promise<{ success: 
     let msg = e.message || "Unknown error";
     // Provide specific hints based on mode
     if (msg.includes("400")) {
-        if (settings.mode === 'official') msg = "400 Error. Your Key might be a 3rd party key? Try switching to 'Custom' tab.";
-        else msg = "400 Invalid Key. Check if Base URL is correct for your provider.";
+        if (settings.mode === 'official') {
+            msg = "400 Error. If using a 3rd party key, switch to 'Custom' tab.";
+        } else {
+            msg = "400 Invalid Key. Try adding '/v1' to your Base URL if your provider uses OneAPI.";
+        }
     }
     if (msg.includes("404")) msg = "404 Not Found. Check Base URL or Model Name.";
     return { success: false, message: msg };
@@ -132,7 +138,6 @@ export const generateOutfitAdvice = async (
     const ai = getClient(settings);
     if (!ai) return fallbackData;
 
-    // Use a simpler model for text logic if available, or default to flash
     const prompt = `
       You are a trendy fashion stylist.
       Context: Weather ${weather.temp}°C ${weather.condition}, City ${weather.city}, User ${gender}, Lang ${language}.
@@ -215,12 +220,12 @@ export const generateCharacterImage = async (
         return extractImageFromResponse(response);
 
     } catch (firstError: any) {
-        // Handle 404 - Try fallback to official ID ONLY if in official mode
-        // If in custom mode, 404 likely means the provider doesn't support the model
+        // Handle 404 - Try fallback only if in official mode
+        // In custom mode, 404 means the provider doesn't support the model, fallback to flash-image usually works on proxies too
         const is404 = firstError.message?.includes('404') || firstError.status === 404 || firstError.message?.includes('not found') || firstError.message?.includes('NOT_FOUND');
-        const isNotDefault = preferredModel !== 'gemini-2.5-flash-image';
-
-        if (is404 && isNotDefault) {
+        
+        // If custom mode, try fallback too because 'nano-banana' might be invalid but 'gemini-2.5-flash-image' might work on the proxy
+        if (is404) {
             console.warn(`Model '${preferredModel}' failed (404). Retrying with 'gemini-2.5-flash-image'.`);
             const retryResponse = await ai.models.generateContent({
               model: 'gemini-2.5-flash-image',
