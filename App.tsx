@@ -302,7 +302,7 @@ const App: React.FC = () => {
       {state.error && <Toast message={state.error} onClose={clearError} type={state.error.includes('API') || state.error.includes('Error') || state.error.includes('Failed') ? 'error' : 'info'} />}
 
       {/* --- Header --- */}
-      <header className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-6 z-10">
+      <header className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-6 z-10 shrink-0">
         <div className="relative w-full sm:w-80 group order-2 sm:order-1">
           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400"><SearchIcon /></div>
           <input
@@ -317,33 +317,34 @@ const App: React.FC = () => {
         </div>
 
         <div className="flex items-center gap-3 order-1 sm:order-2 w-full sm:w-auto justify-end">
-          <div className="flex items-center gap-3 bg-white/30 backdrop-blur-md px-4 py-2 rounded-2xl border border-white/40 shadow-sm overflow-x-auto">
-            <button onClick={toggleGender} className="p-2 rounded-full hover:bg-white/50 transition-colors text-gray-700 active:scale-95"><span className="font-bold text-sm">{state.gender === 'male' ? '♂' : '♀'}</span></button>
-            <div className="w-px h-4 bg-gray-400/30 mx-1"></div>
-            <button onClick={toggleLanguage} className="p-2 rounded-full hover:bg-white/50 transition-colors text-xs font-bold text-gray-700 uppercase">{state.language}</button>
-            <div className="w-px h-4 bg-gray-400/30 mx-1"></div>
-            <div className="flex gap-2">
+          <div className="flex items-center gap-3 bg-white/30 backdrop-blur-md px-4 py-2 rounded-2xl border border-white/40 shadow-sm overflow-x-auto no-scrollbar">
+            <button onClick={toggleGender} className="p-2 rounded-full hover:bg-white/50 transition-colors text-gray-700 active:scale-95 flex-shrink-0"><span className="font-bold text-sm">{state.gender === 'male' ? '♂' : '♀'}</span></button>
+            <div className="w-px h-4 bg-gray-400/30 mx-1 flex-shrink-0"></div>
+            <button onClick={toggleLanguage} className="p-2 rounded-full hover:bg-white/50 transition-colors text-xs font-bold text-gray-700 uppercase flex-shrink-0">{state.language}</button>
+            <div className="w-px h-4 bg-gray-400/30 mx-1 flex-shrink-0"></div>
+            <div className="flex gap-2 flex-shrink-0">
               {(['blue', 'green', 'pink', 'purple'] as Theme[]).map(t => (
                 <button key={t} onClick={() => changeTheme(t)} className={`w-5 h-5 rounded-full border-2 border-white shadow-sm transition-transform active:scale-90 ${t === 'blue' ? 'bg-blue-400' : t === 'green' ? 'bg-emerald-400' : t === 'pink' ? 'bg-rose-400' : 'bg-purple-400'} ${state.theme === t ? 'ring-2 ring-gray-400 scale-110' : ''}`}/>
               ))}
             </div>
           </div>
-          <button onClick={toggleSettings} className={`p-3 bg-white/30 backdrop-blur-md rounded-2xl border border-white/40 shadow-sm hover:bg-white/50 transition-colors ${!state.settings.apiKey ? 'ring-2 ring-red-400 text-red-500 animate-pulse' : 'text-gray-700'}`}>
+          <button onClick={toggleSettings} className={`p-3 bg-white/30 backdrop-blur-md rounded-2xl border border-white/40 shadow-sm hover:bg-white/50 transition-colors flex-shrink-0 ${!state.settings.apiKey ? 'ring-2 ring-red-400 text-red-500 animate-pulse' : 'text-gray-700'}`}>
             <SettingsIcon />
           </button>
         </div>
       </header>
 
       {/* --- Main Content --- */}
-      <main className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 pb-safe-bottom">
-        <div className="lg:col-span-5 flex flex-col gap-6 order-2 lg:order-1">
+      <main className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 w-full">
+        {/* Left Column (Text Content) - Mobile Order 2 */}
+        <div className="lg:col-span-5 flex flex-col gap-6 order-2 lg:order-1 pb-safe-bottom">
           <div className="relative bg-white/40 backdrop-blur-xl border border-white/60 rounded-3xl p-6 shadow-lg animate-fade-in hover:shadow-xl transition-shadow">
              <div className="flex justify-between items-start">
                <div>
                  <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-1">{text.weatherTitle}</h2>
-                 <h1 className="text-3xl font-bold text-gray-800">{state.weather?.city || '...'}</h1>
+                 <h1 className="text-3xl font-bold text-gray-800 break-words">{state.weather?.city || '...'}</h1>
                </div>
-               <div className="text-right">
+               <div className="text-right flex-shrink-0 ml-2">
                  <div className="text-4xl font-light text-gray-900">{state.weather?.temp ?? '--'}°</div>
                  <div className="text-sm text-gray-600">{state.weather?.condition}</div>
                </div>
@@ -375,7 +376,9 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        <div className="lg:col-span-7 h-[50vh] lg:h-auto min-h-[400px] order-1 lg:order-2">
+        {/* Right Column (Image) - Mobile Order 1 */}
+        {/* Adjusted Height for Mobile to allow seeing text content below */}
+        <div className="lg:col-span-7 h-[45vh] min-h-[320px] lg:h-auto lg:min-h-[500px] order-1 lg:order-2">
           <div className="w-full h-full relative rounded-3xl overflow-hidden shadow-2xl border-4 border-white/30 backdrop-blur-sm group bg-gray-200/50">
             <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent z-10 pointer-events-none"></div>
             {!state.isLoading && state.outfit && (
@@ -442,7 +445,7 @@ const App: React.FC = () => {
                     <div className="space-y-6 animate-fade-in">
                         <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 flex items-start gap-3">
                             <div className="p-2 bg-white rounded-full text-blue-500 shadow-sm">
-                                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M12.545,10.539h-4.09v2.922h4.09c-0.158,1.474-1.393,2.623-2.909,2.623c-1.614,0-2.922-1.309-2.922-2.922 c0-1.614,1.309-2.922,2.922-2.922c0.74,0,1.416,0.278,1.944,0.732l2.094-2.094C12.59,7.925,11.37,7.239,10,7.239 c-3.228,0-5.845,2.617-5.845,5.845s2.617,5.845,5.845,5.845c2.932,0,5.437-2.126,5.808-4.99H12.545L12.545,10.539z"/></svg>
+                                <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M12.545,10.539h-4.09v2.922h4.09c-0.158,1.474-1.393,2.623-2.909,2.623c-1.614,0-2.922-1.309-2.922-2.922 c0-1.614,1.309-2.922,2.922-2.922c0.74,0,1.416,0.278,1.944,0.732l2.094-2.094C12.59,7.925,11.37,7.239,10,7.239 c-3.228,0-5.845,2.617-5.845,5.845s2.617,5.845,5.845,5.845c2.932,0,5.437-2.126,5.845,5.845,5.808-4.99H12.545L12.545,10.539z"/></svg>
                             </div>
                             <div>
                                 <h3 className="text-sm font-bold text-blue-900">Google Official</h3>
