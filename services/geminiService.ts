@@ -1,163 +1,149 @@
 
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import { OutfitData, Gender, WeatherData, Language, AppSettings } from "../types";
 
-// Helper to map aliases to real model names
+// --- Helpers ---
+
+// Map aliases to real model names
 const resolveModelName = (inputModel: string): string => {
   const m = inputModel.toLowerCase().trim();
-  // Mapping based on user prompt rules
   if (m === 'nano banana' || m === 'nano-banana' || m === 'gemini flash image') return 'gemini-2.5-flash-image';
   if (m === 'nano banana pro' || m === 'nano-banana-pro' || m === 'nano banana 2' || m === 'gemini pro image') return 'gemini-3-pro-image-preview';
   if (m === 'gemini flash') return 'gemini-flash-latest';
   if (m === 'gemini pro') return 'gemini-3-pro-preview';
-  
-  // Default fallback if empty
   if (!m) return 'gemini-2.5-flash-image';
-  
-  return inputModel; // Return as-is if no alias matched
+  return inputModel;
 };
 
-// Helper to clean JSON string from markdown code blocks
+// Clean JSON string
 const extractJSON = (text: string): any => {
   try {
-    // 1. Try parse directly
     return JSON.parse(text);
   } catch (e) {
-    // 2. Try extract from ```json ... ``` or ``` ... ```
     const match = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
     if (match && match[1]) {
-      try {
-        return JSON.parse(match[1]);
-      } catch (e2) {
-        // continue
-      }
+      try { return JSON.parse(match[1]); } catch (e2) {}
     }
-    // 3. Try finding first { and last }
     const start = text.indexOf('{');
     const end = text.lastIndexOf('}');
     if (start !== -1 && end !== -1) {
-      try {
-        return JSON.parse(text.substring(start, end + 1));
-      } catch (e3) {
-        throw new Error("Failed to parse JSON response");
-      }
+      try { return JSON.parse(text.substring(start, end + 1)); } catch (e3) {}
     }
-    throw new Error("No JSON found in response");
+    throw new Error("Failed to parse JSON response");
   }
 };
 
-// Helper to check API Key safely and initialize client with dynamic settings
-const getClient = (settings?: AppSettings) => {
-  try {
-    // 1. Get raw key from settings or env
-    let apiKey = settings?.apiKey;
-    
-    // Fallback to env if settings key is empty/whitespace
-    if ((!apiKey || apiKey.trim() === '') && typeof process !== 'undefined') {
-      apiKey = process.env?.API_KEY;
-    }
-
-    // 2. Sanitize Key
-    if (apiKey) {
-      apiKey = apiKey.replace(/[\u200B-\u200D\uFEFF]/g, '').trim(); 
-      if (apiKey.toLowerCase().startsWith('bearer ')) {
-        apiKey = apiKey.substring(7).trim();
+// Extract image data from standard Google Response structure
+const extractImageFromResponse = (response: any): string => {
+  // Handle SDK response object or Raw JSON response
+  const candidates = response.candidates || response.response?.candidates;
+  
+  if (candidates?.[0]?.content?.parts) {
+    for (const part of candidates[0].content.parts) {
+      if (part.inlineData && part.inlineData.data) {
+         return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
       }
     }
-
-    if (!apiKey) {
-      console.warn("API Key missing.");
-      return null;
+    const textPart = candidates[0].content.parts.find((p: any) => p.text);
+    if (textPart?.text) {
+      throw new Error(`Model Refused: ${textPart.text.substring(0, 100)}...`);
     }
-
-    // 构造配置对象
-    const clientConfig: any = { apiKey };
-    
-    // 3. 处理 Base URL (Strict Mode Logic)
-    if (settings?.mode === 'custom' && settings?.baseUrl && settings.baseUrl.trim() !== "") {
-      let url = settings.baseUrl.trim();
-      
-      // Ignore official Google URL to prevent conflicts
-      if (!url.includes('generativelanguage.googleapis.com')) {
-          
-          // Remove trailing slash first
-          if (url.endsWith('/')) url = url.slice(0, -1);
-
-          // Fix for 3rd Party Proxies (OneAPI/NewAPI)
-          // 1. Strip trailing version suffixes (/v1, /v1beta) because SDK appends its own version
-          // 2. Force SDK to use 'v1beta' as most proxies map Google Native there
-          if (url.endsWith('/v1')) {
-             url = url.substring(0, url.length - 3); 
-             clientConfig.apiVersion = 'v1beta'; 
-          } else if (url.endsWith('/v1beta')) {
-             url = url.substring(0, url.length - 7); 
-             clientConfig.apiVersion = 'v1beta';
-          }
-          
-          // Remove trailing slash again
-          if (url.endsWith('/')) url = url.slice(0, -1);
-          
-          clientConfig.baseUrl = url;
-      }
-    }
-
-    // 4. Inject Authorization header for proxies if in custom mode (Critical for 400 Errors)
-    if (settings?.mode === 'custom' && apiKey) {
-        // Ensure strictly trimmed key
-        const cleanKey = apiKey.trim();
-        
-        // Configure SDK to send custom headers on EVERY request
-        // This is necessary because many proxies ignore x-goog-api-key and require Authorization
-        clientConfig.requestOptions = {
-            customHeaders: {
-                'Authorization': `Bearer ${cleanKey}`,
-                'Content-Type': 'application/json'
-            }
-        };
-    }
-
-    return new GoogleGenAI(clientConfig);
-  } catch (e) {
-    console.warn("Failed to initialize AI client:", e);
-    return null;
   }
+  throw new Error("Model returned no image data.");
 };
 
-// Test connection function
+// --- Core API Logic ---
+
+// 1. Official Mode: Use Google SDK
+const callOfficialSdk = async (model: string, contents: any, apiKey: string) => {
+  const ai = new GoogleGenAI({ apiKey });
+  return await ai.models.generateContent({ model, contents });
+};
+
+// 2. Custom Mode: Use Native Fetch (Fixes 400 errors on proxies)
+const callCustomFetch = async (settings: AppSettings, model: string, contents: any) => {
+  let baseUrl = settings.baseUrl.trim();
+  let apiKey = settings.apiKey.trim();
+  
+  // Clean Key
+  if (apiKey.toLowerCase().startsWith('bearer ')) {
+    apiKey = apiKey.substring(7).trim();
+  }
+
+  // URL Normalization
+  // If user inputs "https://api.proxy.com/v1", we usually need to strip "/v1" 
+  // and append "/v1beta/models/..." for Google Native format
+  if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
+  if (baseUrl.endsWith('/v1')) baseUrl = baseUrl.slice(0, -3); // Strip OpenAI suffix
+  if (baseUrl.endsWith('/v1beta')) baseUrl = baseUrl.slice(0, -7);
+
+  // Construct Endpoint
+  const endpoint = `${baseUrl}/v1beta/models/${model}:generateContent`;
+
+  // Construct Body (Google Native Format)
+  // contents can be string or object. Convert to array of parts if string.
+  let formattedContents = contents;
+  if (typeof contents === 'string') {
+    formattedContents = { parts: [{ text: contents }] };
+  } else if (contents.parts) {
+      // Already formatted object
+      formattedContents = contents;
+  }
+
+  const payload = {
+    contents: [formattedContents]
+  };
+
+  // EXECUTE FETCH
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      // Critical: Proxies identify user via this header, NOT query param
+      'Authorization': `Bearer ${apiKey}` 
+    },
+    body: JSON.stringify(payload)
+  });
+
+  if (!response.ok) {
+    const errText = await response.text();
+    let errMsg = `Error ${response.status}`;
+    try {
+        const errJson = JSON.parse(errText);
+        if (errJson.error && errJson.error.message) errMsg += `: ${errJson.error.message}`;
+    } catch (e) {
+        errMsg += `: ${errText.substring(0, 100)}`;
+    }
+    throw new Error(errMsg);
+  }
+
+  return await response.json();
+};
+
+// --- Exported Services ---
+
 export const testConnection = async (settings: AppSettings): Promise<{ success: boolean; message: string }> => {
   try {
-    const ai = getClient(settings);
-    if (!ai) return { success: false, message: "API Key missing" };
-    
-    // Simple test query
-    await ai.models.generateContent({
-      model: "gemini-2.5-flash", 
-      contents: "Hi",
-    }); 
+    if (!settings.apiKey) return { success: false, message: "API Key missing" };
+
+    const model = "gemini-2.5-flash";
+    const prompt = "Hi";
+
+    if (settings.mode === 'custom') {
+      await callCustomFetch(settings, model, prompt);
+    } else {
+      await callOfficialSdk(model, prompt, settings.apiKey);
+    }
 
     return { success: true, message: "Connection Successful!" };
   } catch (e: any) {
     console.error("Connection Test Error:", e);
     let msg = e.message || "Unknown error";
     
-    // Try to parse more details if available
-    if (e.response) {
-       try {
-         const errBody = await e.response.json();
-         if (errBody.error && errBody.error.message) {
-            msg = `${e.status} ${errBody.error.message}`;
-         }
-       } catch (jsonErr) {}
-    }
+    if (msg.includes("404")) msg = "404 Not Found. Check Base URL.";
+    if (msg.includes("401") || msg.includes("403")) msg = "Auth Failed. Check API Key.";
+    if (msg.includes("Failed to fetch")) msg = "Network Error. Check CORS or URL.";
 
-    if (msg.includes("400")) {
-        if (settings.mode === 'official') {
-            msg = "400 Error. If using a 3rd party key, switch to 'Custom' tab.";
-        } else {
-            msg = "400 Bad Request. Checked: Authorization Header injected. Verify Key/URL.";
-        }
-    } 
-    
     return { success: false, message: msg };
   }
 };
@@ -179,8 +165,7 @@ export const generateOutfitAdvice = async (
   };
 
   try {
-    const ai = getClient(settings);
-    if (!ai) return fallbackData;
+    if (!settings?.apiKey) return fallbackData;
 
     const prompt = `
       You are a trendy fashion stylist.
@@ -197,12 +182,26 @@ export const generateOutfitAdvice = async (
       }
     `;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash", 
-      contents: prompt,
-    });
+    let response: any;
+    if (settings.mode === 'custom') {
+      response = await callCustomFetch(settings, "gemini-2.5-flash", prompt);
+    } else {
+      response = await callOfficialSdk("gemini-2.5-flash", prompt, settings.apiKey);
+    }
 
-    const text = response.text;
+    // Handle standard Google response text extraction
+    let text = "";
+    const candidates = response.candidates || response.response?.candidates; // Handle SDK vs Raw JSON diffs
+    if (candidates && candidates[0]?.content?.parts?.[0]?.text) {
+        text = candidates[0].content.parts[0].text;
+    } else if (response.text && typeof response.text === 'string') {
+        // SDK property shortcut
+        text = response.text;
+    } else if (typeof response.text === 'function') {
+        // SDK method shortcut (rare in new versions but safe)
+        text = response.text();
+    }
+
     if (!text) throw new Error("Empty response from AI");
     
     return extractJSON(text) as OutfitData;
@@ -210,24 +209,6 @@ export const generateOutfitAdvice = async (
     console.error("Outfit gen error details:", error);
     throw error;
   }
-};
-
-// Helper to extract image data from response
-const extractImageFromResponse = (response: any): string => {
-  if (response.candidates?.[0]?.content?.parts) {
-    for (const part of response.candidates[0].content.parts) {
-      if (part.inlineData && part.inlineData.data) {
-         return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
-      }
-    }
-    
-    // Check for refusal text
-    const textPart = response.candidates[0].content.parts.find((p: any) => p.text);
-    if (textPart && textPart.text) {
-      throw new Error(`Model Refused: ${textPart.text.substring(0, 100)}...`);
-    }
-  }
-  throw new Error("Model returned no image data.");
 };
 
 export const generateCharacterImage = async (
@@ -240,10 +221,8 @@ export const generateCharacterImage = async (
   const fallbackImage = `https://picsum.photos/seed/${seed}/800/1000`;
 
   try {
-    const ai = getClient(settings);
-    if (!ai) return fallbackImage;
+    if (!settings?.apiKey) return fallbackImage;
   
-    // Resolve alias (e.g., 'nano-banana' -> 'gemini-2.5-flash-image')
     const userModel = settings?.imageModel || '';
     const preferredModel = resolveModelName(userModel);
 
@@ -255,31 +234,29 @@ export const generateCharacterImage = async (
       Full body shot.
     `;
 
-    try {
-        // Attempt 1: Resolved model
-        const response = await ai.models.generateContent({
-          model: preferredModel,
-          contents: prompt,
-        });
-        return extractImageFromResponse(response);
+    const makeCall = async (modelName: string) => {
+        if (settings.mode === 'custom') {
+            return await callCustomFetch(settings, modelName, prompt);
+        } else {
+            return await callOfficialSdk(modelName, prompt, settings.apiKey);
+        }
+    };
 
+    try {
+        const response = await makeCall(preferredModel);
+        return extractImageFromResponse(response);
     } catch (firstError: any) {
-        // Handle 404 - If 3rd party, maybe the alias mapping was wrong for their specific system?
-        // But usually, flash-image is safer.
-        const is404 = firstError.message?.includes('404') || firstError.status === 404 || firstError.message?.includes('not found') || firstError.message?.includes('NOT_FOUND');
+        // Handle 404/Not Found - Retry with flash-image
+        const msg = firstError.message || '';
+        const is404 = msg.includes('404') || msg.includes('not found') || msg.includes('NOT_FOUND');
         
         if (is404) {
             console.warn(`Model '${preferredModel}' failed (404). Retrying with 'gemini-2.5-flash-image'.`);
-            const retryResponse = await ai.models.generateContent({
-              model: 'gemini-2.5-flash-image',
-              contents: prompt,
-            });
+            const retryResponse = await makeCall('gemini-2.5-flash-image');
             return extractImageFromResponse(retryResponse);
         }
-        
         throw firstError;
     }
-
   } catch (error: any) {
     console.error("Image gen error details:", error);
     throw error;
