@@ -274,17 +274,13 @@ const App: React.FC = () => {
   };
   
   const saveSettings = () => {
-    // Strict sanitization
     let sanitizedKey = tempSettings.apiKey;
     if (sanitizedKey) {
         sanitizedKey = sanitizedKey.replace(/[\u200B-\u200D\uFEFF]/g, '').trim().replace(/^Bearer\s+/i, '');
     }
-    
-    // Logic to enforce consistency based on mode
     const sanitizedSettings = {
       ...tempSettings,
       apiKey: sanitizedKey,
-      // If official mode, FORCE baseUrl to empty to prevent 400 errors
       baseUrl: tempSettings.mode === 'official' ? '' : tempSettings.baseUrl
     };
 
@@ -297,7 +293,7 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className={`min-h-screen w-full transition-colors duration-500 bg-gradient-to-br ${THEMES[state.theme]} p-4 sm:p-6 lg:p-8 flex flex-col`}>
+    <div className={`min-h-[100dvh] w-full transition-colors duration-500 bg-gradient-to-br ${THEMES[state.theme]} p-4 sm:p-6 lg:p-8 flex flex-col`}>
       <div className="fixed top-0 left-0 right-0 h-safe-top bg-transparent z-50"></div>
       {state.error && <Toast message={state.error} onClose={clearError} type={state.error.includes('API') || state.error.includes('Error') || state.error.includes('Failed') ? 'error' : 'info'} />}
 
@@ -335,9 +331,11 @@ const App: React.FC = () => {
       </header>
 
       {/* --- Main Content --- */}
-      <main className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 w-full">
+      {/* Added pb-20 to ensure scrolling space at bottom for mobile */}
+      <main className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 w-full pb-20">
         {/* Left Column (Text Content) - Mobile Order 2 */}
-        <div className="lg:col-span-5 flex flex-col gap-6 order-2 lg:order-1 pb-safe-bottom">
+        <div className="lg:col-span-5 flex flex-col gap-6 order-2 lg:order-1">
+          {/* Weather Card */}
           <div className="relative bg-white/40 backdrop-blur-xl border border-white/60 rounded-3xl p-6 shadow-lg animate-fade-in hover:shadow-xl transition-shadow">
              <div className="flex justify-between items-start">
                <div>
@@ -355,10 +353,11 @@ const App: React.FC = () => {
              </div>
           </div>
 
-          <div className="flex-1 bg-white/40 backdrop-blur-xl border border-white/60 rounded-3xl p-6 shadow-lg animate-slide-up hover:shadow-xl transition-shadow flex flex-col justify-center min-h-[300px]">
+          {/* Outfit Card - Removed fixed height constraints for mobile to allow natural flow */}
+          <div className="w-full bg-white/40 backdrop-blur-xl border border-white/60 rounded-3xl p-6 shadow-lg animate-slide-up hover:shadow-xl transition-shadow flex flex-col justify-center min-h-[250px] lg:flex-1">
             <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4 border-b border-gray-200/50 pb-2">{text.outfitTitle}</h2>
             {state.isLoading ? (
-              <div className="flex-1 flex flex-col items-center justify-center space-y-4 opacity-70">
+              <div className="flex-1 flex flex-col items-center justify-center space-y-4 opacity-70 py-4">
                 <div className="w-10 h-10 border-4 border-white border-t-transparent rounded-full animate-spin"></div>
                 <p className="text-sm animate-pulse">{text.loading}</p>
               </div>
@@ -377,8 +376,8 @@ const App: React.FC = () => {
         </div>
 
         {/* Right Column (Image) - Mobile Order 1 */}
-        {/* Adjusted Height for Mobile to allow seeing text content below */}
-        <div className="lg:col-span-7 h-[45vh] min-h-[320px] lg:h-auto lg:min-h-[500px] order-1 lg:order-2">
+        {/* Adjusted Height: 40vh on mobile to save space for text below. Removed strict min-h-320px to allow fitting on small screens if needed, but added reasonable defaults */}
+        <div className="lg:col-span-7 h-[40vh] min-h-[300px] lg:h-auto lg:min-h-[500px] order-1 lg:order-2">
           <div className="w-full h-full relative rounded-3xl overflow-hidden shadow-2xl border-4 border-white/30 backdrop-blur-sm group bg-gray-200/50">
             <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent z-10 pointer-events-none"></div>
             {!state.isLoading && state.outfit && (
