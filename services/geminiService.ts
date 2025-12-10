@@ -2,6 +2,35 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { OutfitData, Gender, WeatherData, Language, AppSettings } from "../types";
 
+// Helper to clean JSON string from markdown code blocks
+const extractJSON = (text: string): any => {
+  try {
+    // 1. Try parse directly
+    return JSON.parse(text);
+  } catch (e) {
+    // 2. Try extract from ```json ... ``` or ``` ... ```
+    const match = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (match && match[1]) {
+      try {
+        return JSON.parse(match[1]);
+      } catch (e2) {
+        // continue
+      }
+    }
+    // 3. Try finding first { and last }
+    const start = text.indexOf('{');
+    const end = text.lastIndexOf('}');
+    if (start !== -1 && end !== -1) {
+      try {
+        return JSON.parse(text.substring(start, end + 1));
+      } catch (e3) {
+        throw new Error("Failed to parse JSON response");
+      }
+    }
+    throw new Error("No JSON found in response");
+  }
+};
+
 // Helper to check API Key safely and initialize client with dynamic settings
 const getClient = (settings?: AppSettings) => {
   try {
@@ -14,18 +43,23 @@ const getClient = (settings?: AppSettings) => {
     }
 
     if (!apiKey) {
-      console.warn("API Key missing. Using fallback mode.");
+      console.warn("API Key missing.");
       return null;
     }
 
     // 构造配置对象
     const clientConfig: any = { apiKey };
     
-    // 3. 处理 Base URL (关键修复：去除末尾斜杠，防止双重斜杠导致 404)
+    // 3. 处理 Base URL
     if (settings?.baseUrl && settings.baseUrl.trim() !== "") {
       let url = settings.baseUrl.trim();
+      // Remove trailing slash
       if (url.endsWith('/')) {
         url = url.slice(0, -1);
+      }
+      // Remove version suffix if user accidentally added it (SDK adds it)
+      if (url.endsWith('/v1beta') || url.endsWith('/v1')) {
+         url = url.replace(/\/v1(beta)?$/, '');
       }
       clientConfig.baseUrl = url;
     }
@@ -57,48 +91,53 @@ export const generateOutfitAdvice = async (
     const ai = getClient(settings);
     if (!ai) return fallbackData;
 
+    // Use a simpler model for text logic if available, or default to flash
     const prompt = `
-      You are a trendy fashion stylist for college students.
-      Context:
-      - Weather: ${weather.temp}°C, ${weather.condition} in ${weather.city}.
-      - User: College Student, Gender: ${gender}.
-      - Language: ${language === 'zh' ? 'Chinese (Simplified)' : 'English'}.
+      You are a trendy fashion stylist.
+      Context: Weather ${weather.temp}°C ${weather.condition}, City ${weather.city}, User ${gender}, Lang ${language}.
+      Task: Suggest a stylish outfit.
       
-      Task: Suggest a stylish, comfortable, and practical outfit for classes and campus life.
-      Return JSON only.
+      IMPORTANT: Return ONLY valid JSON with this structure, no markdown:
+      {
+        "top": "string",
+        "bottom": "string",
+        "shoes": "string",
+        "accessories": ["string"],
+        "reasoning": "string"
+      }
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
+      model: "gemini-2.5-flash", 
       contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            top: { type: Type.STRING, description: "Description of the top (shirt/jacket)" },
-            bottom: { type: Type.STRING, description: "Description of trousers/skirt" },
-            shoes: { type: Type.STRING, description: "Description of shoes" },
-            accessories: { 
-              type: Type.ARRAY, 
-              items: { type: Type.STRING },
-              description: "List of 1-2 accessories" 
-            },
-            reasoning: { type: Type.STRING, description: "Short stylistic reason (max 1 sentence)" }
-          },
-          required: ["top", "bottom", "shoes", "accessories", "reasoning"]
-        }
-      }
     });
 
     const text = response.text;
-    if (!text) throw new Error("No response from AI");
+    if (!text) throw new Error("Empty response from AI");
     
-    return JSON.parse(text) as OutfitData;
-  } catch (error) {
-    console.error("Outfit gen error:", error);
-    return fallbackData;
+    return extractJSON(text) as OutfitData;
+  } catch (error: any) {
+    console.error("Outfit gen error details:", error);
+    throw error;
   }
+};
+
+// Helper to extract image data from response
+const extractImageFromResponse = (response: any): string => {
+  if (response.candidates?.[0]?.content?.parts) {
+    for (const part of response.candidates[0].content.parts) {
+      if (part.inlineData && part.inlineData.data) {
+         return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+      }
+    }
+    
+    // Check for refusal text
+    const textPart = response.candidates[0].content.parts.find((p: any) => p.text);
+    if (textPart && textPart.text) {
+      throw new Error(`Model Refused: ${textPart.text.substring(0, 100)}...`);
+    }
+  }
+  throw new Error("Model returned no image data.");
 };
 
 export const generateCharacterImage = async (
@@ -107,7 +146,6 @@ export const generateCharacterImage = async (
   weather: WeatherData,
   settings?: AppSettings
 ): Promise<string> => {
-  // Always return a high quality random placeholder on error or missing key
   const seed = Math.floor(Math.random() * 1000);
   const fallbackImage = `https://picsum.photos/seed/${seed}/800/1000`;
 
@@ -115,36 +153,47 @@ export const generateCharacterImage = async (
     const ai = getClient(settings);
     if (!ai) return fallbackImage;
   
-    // 使用用户配置的模型，或者默认使用 flash-image
-    const modelName = settings?.imageModel && settings.imageModel.trim() !== "" 
+    const preferredModel = settings?.imageModel && settings.imageModel.trim() !== "" 
       ? settings.imageModel 
       : "gemini-2.5-flash-image";
 
     const prompt = `
-      A 3D rendered character design of a cute ${gender} college student.
-      Style: Pixar-like, high quality, 3D illustration, soft lighting, vibrant colors.
-      Outfit: Wearing ${outfit.top}, ${outfit.bottom}, and ${outfit.shoes}.
-      Background: Soft blurred abstract gradient.
-      Pose: Standing confidently, friendly expression.
-      Weather context: ${weather.condition} (if rainy, maybe holding umbrella).
-      Full body shot, centered.
+      High quality 3D cute character, ${gender} college student.
+      Wearing ${outfit.top}, ${outfit.bottom}, ${outfit.shoes}.
+      Style: Pixar 3D, soft lighting, 4k.
+      Background: Blurred abstract.
+      Full body shot.
     `;
 
-    const response = await ai.models.generateContent({
-      model: modelName,
-      contents: prompt,
-    });
+    try {
+        // Attempt 1: User selected model
+        const response = await ai.models.generateContent({
+          model: preferredModel,
+          contents: prompt,
+        });
+        return extractImageFromResponse(response);
 
-    if (response.candidates?.[0]?.content?.parts) {
-      for (const part of response.candidates[0].content.parts) {
-        if (part.inlineData && part.inlineData.data) {
-           return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+    } catch (firstError: any) {
+        // Handle 404 (Not Found) - Try fallback to official ID
+        // This handles cases where user selects "nano-banana" but host only supports "gemini-2.5-flash-image"
+        const is404 = firstError.message?.includes('404') || firstError.status === 404 || firstError.message?.includes('not found') || firstError.message?.includes('NOT_FOUND');
+        const isNotDefault = preferredModel !== 'gemini-2.5-flash-image';
+
+        if (is404 && isNotDefault) {
+            console.warn(`Model '${preferredModel}' failed (404). Retrying with 'gemini-2.5-flash-image'.`);
+            const retryResponse = await ai.models.generateContent({
+              model: 'gemini-2.5-flash-image',
+              contents: prompt,
+            });
+            return extractImageFromResponse(retryResponse);
         }
-      }
+        
+        throw firstError;
     }
-    throw new Error("No image generated");
-  } catch (error) {
-    console.error("Image gen error:", error);
-    return fallbackImage;
+
+  } catch (error: any) {
+    console.error("Image gen error details:", error);
+    // Propagate error to let UI show it
+    throw error;
   }
 };

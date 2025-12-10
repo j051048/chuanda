@@ -29,11 +29,14 @@ const CloseIcon = () => (
 );
 
 // Models configuration
-// Updated to user specific models and official google model
+// Provide BOTH official Google IDs and common 3rd-party alias IDs so the user can choose what matches their API key.
 const AVAILABLE_MODELS = [
-  { id: 'nano-banana', name: 'Nano Banana (第三方/Fast)' },
-  { id: 'nano-banana-pro', name: 'Nano Banana Pro (第三方/High)' },
-  { id: 'gemini-2.5-flash-image', name: 'Google Flash Image (官方)' },
+  // Official Google
+  { id: 'gemini-2.5-flash-image', name: 'Google: Flash Image (Official)' },
+  { id: 'gemini-3-pro-image-preview', name: 'Google: Pro Image (Official)' },
+  // 3rd Party
+  { id: 'nano-banana', name: '3rd Party: Nano Banana' },
+  { id: 'nano-banana-pro', name: '3rd Party: Nano Banana Pro' },
 ];
 
 const App: React.FC = () => {
@@ -41,9 +44,11 @@ const App: React.FC = () => {
   const loadSettings = (): AppSettings => {
     try {
       const saved = localStorage.getItem('uniStyleSettings');
-      if (saved) return JSON.parse(saved);
+      if (saved) {
+        return JSON.parse(saved);
+      }
     } catch (e) { console.error(e); }
-    return { apiKey: '', baseUrl: '', imageModel: 'nano-banana' }; // Default to nano-banana per user request context
+    return { apiKey: '', baseUrl: '', imageModel: 'gemini-2.5-flash-image' };
   };
 
   // State
@@ -93,7 +98,7 @@ const App: React.FC = () => {
       regenerating: '重绘中...',
       configNeeded: '请先配置 API Key 以使用 AI 功能',
       checkConfig: 'AI 调用失败，请检查设置',
-      useOfficial: '使用 Google 官方免费源',
+      useOfficial: '恢复默认 (Google 官方)',
       customConfig: '自定义 / 第三方配置'
     },
     en: {
@@ -120,7 +125,7 @@ const App: React.FC = () => {
       regenerating: 'Redrawing...',
       configNeeded: 'Please configure API Key to use AI features',
       checkConfig: 'AI call failed, please check settings',
-      useOfficial: 'Use Official Google API',
+      useOfficial: 'Reset to Default (Official)',
       customConfig: 'Custom / 3rd Party Config'
     }
   };
@@ -148,12 +153,29 @@ const App: React.FC = () => {
       const weatherData = await fetchWeather(searchInput);
       
       // 2. Get Outfit Text
+      // This might throw if API key is invalid or quota exceeded
       const outfitData = await generateOutfitAdvice(weatherData, state.gender, state.language, currentSettings);
       
       // 3. Get Outfit Image
-      const imageUrl = await generateCharacterImage(outfitData, state.gender, weatherData, currentSettings);
+      let imageUrl = null;
+      try {
+        imageUrl = await generateCharacterImage(outfitData, state.gender, weatherData, currentSettings);
+      } catch (imgError: any) {
+         console.warn("Image generation specific error:", imgError);
+         
+         let msg = imgError.message || 'Unknown';
+         // Handle 403 Permission Denied - common when key doesn't support model
+         if (msg.includes('403') || msg.includes('PERMISSION_DENIED')) {
+            msg = `No permission for '${currentSettings.imageModel}'. Try a different model in Settings.`;
+         }
+         // Handle 404 Not Found - common when 3rd party doesn't support official ID
+         else if (msg.includes('404') || msg.includes('not found')) {
+            msg = `Model '${currentSettings.imageModel}' not found (404). Check Settings.`;
+         }
+         
+         setState(prev => ({ ...prev, error: `Image Gen Failed: ${msg}` }));
+      }
       
-      // 4. Check if we got fallback data (Error detection)
       const isFallback = outfitData.reasoning.includes("由于网络原因") || outfitData.reasoning.includes("network issues");
 
       setState(prev => ({
@@ -163,15 +185,20 @@ const App: React.FC = () => {
         outfit: outfitData,
         characterImageUrl: imageUrl,
         isLoading: false,
-        // If fallback detected, show settings and error toast
         showSettings: isFallback ? true : prev.showSettings,
-        error: isFallback ? text.checkConfig : null
+        // Only show config check error if it was a fallback situation
+        error: isFallback ? text.checkConfig : prev.error
       }));
 
     } catch (err: any) {
-      console.error(err);
+      console.error("Search Flow Error:", err);
+      // Construct a user-friendly error message that includes tech details
       let errorMessage = text.error;
-      if (err.message && (err.message.includes('City not found') || err.message.includes('unavailable'))) {
+      
+      // API specific errors
+      if (err.status || err.message?.includes('fetch')) {
+         errorMessage = `API Error: ${err.status || 'Network'} - ${err.message}`;
+      } else if (err.message && (err.message.includes('City not found') || err.message.includes('unavailable'))) {
         errorMessage = state.language === 'zh' ? '未找到该城市或网络错误' : 'City not found or network error';
       }
       
@@ -190,7 +217,7 @@ const App: React.FC = () => {
     setState(prev => ({ ...prev, isImageLoading: true }));
 
     try {
-      // Force refresh by calling service again (random seed is internal or handled by model variation)
+      // Force refresh by calling service again
       const imageUrl = await generateCharacterImage(state.outfit, state.gender, state.weather, state.settings);
       
       setState(prev => ({
@@ -198,9 +225,19 @@ const App: React.FC = () => {
         characterImageUrl: imageUrl,
         isImageLoading: false
       }));
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
-      setState(prev => ({ ...prev, isImageLoading: false, error: 'Image refresh failed' }));
+      let msg = e.message || 'Unknown';
+       if (msg.includes('403') || msg.includes('PERMISSION_DENIED')) {
+            msg = `No permission for model. Try a different model.`;
+       } else if (msg.includes('404') || msg.includes('not found')) {
+            msg = `Model not found (404). Check Settings.`;
+       }
+      setState(prev => ({ 
+        ...prev, 
+        isImageLoading: false, 
+        error: `Refresh Failed: ${msg}`
+      }));
     }
   };
 
@@ -243,7 +280,7 @@ const App: React.FC = () => {
       {/* Meta for Status Bar */}
       <div className="fixed top-0 left-0 right-0 h-safe-top bg-transparent z-50"></div>
 
-      {state.error && <Toast message={state.error} onClose={clearError} type={state.error.includes('配置') || state.error.includes('Config') ? 'info' : 'error'} />}
+      {state.error && <Toast message={state.error} onClose={clearError} type={state.error.includes('API') || state.error.includes('Error') || state.error.includes('Failed') ? 'error' : 'info'} />}
 
       {/* --- Header / Controls --- */}
       <header className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-6 z-10">
@@ -486,6 +523,7 @@ const App: React.FC = () => {
                   className="w-full px-4 py-2 rounded-xl bg-gray-50 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
                   placeholder="https://generativelanguage.googleapis.com"
                 />
+                <p className="text-xs text-gray-400 mt-1">第三方请确保支持 Google 协议 (无需 /v1beta 后缀)</p>
               </div>
 
               {/* Model Selection */}
@@ -532,8 +570,8 @@ const App: React.FC = () => {
                 
                 <p className="text-xs text-gray-500 mt-2">
                   {state.language === 'zh' 
-                    ? "提示：使用 nano-banana 系列通常需要配置第三方 Base URL。"
-                    : "Note: nano-banana models usually require a 3rd party Base URL."}
+                    ? "提示：如果遇到 403 权限错误，请尝试切换其他模型。"
+                    : "Tip: If you get 403 Permission Denied, try switching models."}
                 </p>
               </div>
 
