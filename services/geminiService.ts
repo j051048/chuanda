@@ -18,10 +18,16 @@ const getClient = (settings?: AppSettings) => {
       return null;
     }
 
-    // 构造配置对象，如果有 baseUrl 则传入
+    // 构造配置对象
     const clientConfig: any = { apiKey };
+    
+    // 3. 处理 Base URL (关键修复：去除末尾斜杠，防止双重斜杠导致 404)
     if (settings?.baseUrl && settings.baseUrl.trim() !== "") {
-      clientConfig.baseUrl = settings.baseUrl;
+      let url = settings.baseUrl.trim();
+      if (url.endsWith('/')) {
+        url = url.slice(0, -1);
+      }
+      clientConfig.baseUrl = url;
     }
 
     return new GoogleGenAI(clientConfig);

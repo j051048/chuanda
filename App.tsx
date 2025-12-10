@@ -28,6 +28,14 @@ const CloseIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
 );
 
+// Models configuration
+// Updated to user specific models and official google model
+const AVAILABLE_MODELS = [
+  { id: 'nano-banana', name: 'Nano Banana (第三方/Fast)' },
+  { id: 'nano-banana-pro', name: 'Nano Banana Pro (第三方/High)' },
+  { id: 'gemini-2.5-flash-image', name: 'Google Flash Image (官方)' },
+];
+
 const App: React.FC = () => {
   // Load settings from local storage
   const loadSettings = (): AppSettings => {
@@ -35,7 +43,7 @@ const App: React.FC = () => {
       const saved = localStorage.getItem('uniStyleSettings');
       if (saved) return JSON.parse(saved);
     } catch (e) { console.error(e); }
-    return { apiKey: '', baseUrl: '', imageModel: 'gemini-2.5-flash-image' };
+    return { apiKey: '', baseUrl: '', imageModel: 'nano-banana' }; // Default to nano-banana per user request context
   };
 
   // State
@@ -77,12 +85,16 @@ const App: React.FC = () => {
       copy: '一键复制',
       error: '出错了，请稍后再试',
       settings: '设置',
-      apiKey: 'API Key (Google/第三方)',
-      baseUrl: 'Base URL (可选, 默认官方)',
-      model: '绘画模型 (默认: gemini-2.5-flash-image)',
+      apiKey: 'API Key',
+      baseUrl: 'Base URL',
+      model: '绘画模型',
       save: '保存并应用',
       refreshImage: '刷新形象',
-      regenerating: '重绘中...'
+      regenerating: '重绘中...',
+      configNeeded: '请先配置 API Key 以使用 AI 功能',
+      checkConfig: 'AI 调用失败，请检查设置',
+      useOfficial: '使用 Google 官方免费源',
+      customConfig: '自定义 / 第三方配置'
     },
     en: {
       searchPlaceholder: 'Enter city (e.g., Shanghai)',
@@ -100,16 +112,29 @@ const App: React.FC = () => {
       copy: 'Copy',
       error: 'Something went wrong',
       settings: 'Settings',
-      apiKey: 'API Key (Google/Third Party)',
-      baseUrl: 'Base URL (Optional)',
-      model: 'Image Model (Default: gemini-2.5-flash-image)',
+      apiKey: 'API Key',
+      baseUrl: 'Base URL',
+      model: 'Image Model',
       save: 'Save & Apply',
       refreshImage: 'Refresh Look',
-      regenerating: 'Redrawing...'
+      regenerating: 'Redrawing...',
+      configNeeded: 'Please configure API Key to use AI features',
+      checkConfig: 'AI call failed, please check settings',
+      useOfficial: 'Use Official Google API',
+      customConfig: 'Custom / 3rd Party Config'
     }
   };
 
   const text = t[state.language];
+
+  // Helper to preset official google settings
+  const useOfficialPreset = () => {
+    setTempSettings(prev => ({
+      ...prev,
+      baseUrl: '', // Empty means official endpoint
+      imageModel: 'gemini-2.5-flash-image'
+    }));
+  };
 
   // Core Logic - Full Search
   const handleSearch = useCallback(async (customSettings?: AppSettings) => {
@@ -127,6 +152,9 @@ const App: React.FC = () => {
       
       // 3. Get Outfit Image
       const imageUrl = await generateCharacterImage(outfitData, state.gender, weatherData, currentSettings);
+      
+      // 4. Check if we got fallback data (Error detection)
+      const isFallback = outfitData.reasoning.includes("由于网络原因") || outfitData.reasoning.includes("network issues");
 
       setState(prev => ({
         ...prev,
@@ -134,7 +162,10 @@ const App: React.FC = () => {
         weather: weatherData,
         outfit: outfitData,
         characterImageUrl: imageUrl,
-        isLoading: false
+        isLoading: false,
+        // If fallback detected, show settings and error toast
+        showSettings: isFallback ? true : prev.showSettings,
+        error: isFallback ? text.checkConfig : null
       }));
 
     } catch (err: any) {
@@ -150,7 +181,7 @@ const App: React.FC = () => {
         error: errorMessage 
       }));
     }
-  }, [searchInput, state.gender, state.language, state.settings, text.error]);
+  }, [searchInput, state.gender, state.language, state.settings, text.error, text.checkConfig]);
 
   // Image Refresh Logic
   const handleRefreshImage = async () => {
@@ -173,9 +204,18 @@ const App: React.FC = () => {
     }
   };
 
-  // Initial Load
+  // Initial Load & Config Check
   useEffect(() => {
-    handleSearch();
+    // If no API Key configured, don't run search, just open settings
+    if (!state.settings.apiKey) {
+      setState(prev => ({ 
+        ...prev, 
+        showSettings: true,
+        error: text.configNeeded
+      }));
+    } else {
+      handleSearch();
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); 
 
@@ -192,8 +232,8 @@ const App: React.FC = () => {
   const saveSettings = () => {
     localStorage.setItem('uniStyleSettings', JSON.stringify(tempSettings));
     setState(s => ({ ...s, settings: tempSettings, showSettings: false }));
-    // Optional: trigger search again with new settings if we have a city
-    if (state.weather) {
+    // Trigger search with new settings
+    if (state.weather || searchInput) {
       handleSearch(tempSettings);
     }
   };
@@ -203,7 +243,7 @@ const App: React.FC = () => {
       {/* Meta for Status Bar */}
       <div className="fixed top-0 left-0 right-0 h-safe-top bg-transparent z-50"></div>
 
-      {state.error && <Toast message={state.error} onClose={clearError} type="error" />}
+      {state.error && <Toast message={state.error} onClose={clearError} type={state.error.includes('配置') || state.error.includes('Config') ? 'info' : 'error'} />}
 
       {/* --- Header / Controls --- */}
       <header className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-6 z-10">
@@ -265,7 +305,7 @@ const App: React.FC = () => {
           {/* Settings Button */}
           <button 
             onClick={toggleSettings}
-            className="p-3 bg-white/30 backdrop-blur-md rounded-2xl border border-white/40 shadow-sm hover:bg-white/50 transition-colors text-gray-700"
+            className={`p-3 bg-white/30 backdrop-blur-md rounded-2xl border border-white/40 shadow-sm hover:bg-white/50 transition-colors ${!state.settings.apiKey ? 'ring-2 ring-red-400 text-red-500 animate-pulse' : 'text-gray-700'}`}
           >
             <SettingsIcon />
           </button>
@@ -400,7 +440,7 @@ const App: React.FC = () => {
       {state.showSettings && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity" onClick={toggleSettings}></div>
-          <div className="bg-white/90 backdrop-blur-xl rounded-3xl shadow-2xl w-full max-w-md p-6 relative animate-slide-up border border-white/50">
+          <div className="bg-white/90 backdrop-blur-xl rounded-3xl shadow-2xl w-full max-w-md p-6 relative animate-slide-up border border-white/50 max-h-[90vh] overflow-y-auto">
             <button onClick={toggleSettings} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600">
               <CloseIcon />
             </button>
@@ -411,9 +451,22 @@ const App: React.FC = () => {
             </h2>
 
             <div className="space-y-4">
+              
+              {/* Quick Presets */}
+              <div className="p-3 bg-blue-50 rounded-xl border border-blue-100 mb-2">
+                 <p className="text-xs text-blue-600 font-semibold uppercase mb-2">{text.useOfficial}</p>
+                 <button 
+                   onClick={useOfficialPreset}
+                   className="w-full py-2 bg-white text-blue-600 border border-blue-200 hover:bg-blue-50 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                 >
+                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.384-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
+                   Google Official Defaults
+                 </button>
+              </div>
+
               {/* API Key */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">{text.apiKey}</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{text.apiKey} <span className="text-xs font-normal text-gray-400">(Google / Third-party)</span></label>
                 <input 
                   type="password" 
                   value={tempSettings.apiKey}
@@ -425,7 +478,7 @@ const App: React.FC = () => {
 
               {/* Base URL */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">{text.baseUrl}</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{text.baseUrl} <span className="text-xs font-normal text-gray-400">(Optional for Official)</span></label>
                 <input 
                   type="text" 
                   value={tempSettings.baseUrl}
@@ -435,17 +488,53 @@ const App: React.FC = () => {
                 />
               </div>
 
-              {/* Model */}
+              {/* Model Selection */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{text.model}</label>
-                <input 
-                  type="text" 
-                  value={tempSettings.imageModel}
-                  onChange={e => setTempSettings({...tempSettings, imageModel: e.target.value})}
-                  className="w-full px-4 py-2 rounded-xl bg-gray-50 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-                  placeholder="gemini-2.5-flash-image"
-                />
-                <p className="text-xs text-gray-500 mt-1">推荐使用 Flash Image (Nano Banana) 系列，速度快且免费额度高。</p>
+                
+                <div className="space-y-3">
+                  {/* Preset Buttons */}
+                  <div className="grid grid-cols-1 gap-2">
+                    {AVAILABLE_MODELS.map((m) => (
+                      <button
+                        key={m.id}
+                        onClick={() => setTempSettings({ ...tempSettings, imageModel: m.id })}
+                        className={`px-4 py-3 rounded-xl border text-left transition-all flex items-center justify-between group ${
+                          tempSettings.imageModel === m.id 
+                            ? 'border-blue-500 bg-blue-50 text-blue-700 ring-1 ring-blue-500' 
+                            : 'border-gray-200 bg-gray-50 hover:bg-white hover:border-gray-300'
+                        }`}
+                      >
+                        <span className="font-medium text-sm">{m.name}</span>
+                        {tempSettings.imageModel === m.id && (
+                          <span className="text-blue-500">
+                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                          </span>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Custom Input */}
+                  <div className="relative">
+                     <input 
+                      type="text" 
+                      value={tempSettings.imageModel}
+                      onChange={e => setTempSettings({...tempSettings, imageModel: e.target.value})}
+                      className="w-full px-4 py-2 rounded-xl bg-gray-50 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50 text-sm"
+                      placeholder="Custom model name..."
+                    />
+                    <div className="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+                      <span className="text-xs text-gray-400">Custom</span>
+                    </div>
+                  </div>
+                </div>
+                
+                <p className="text-xs text-gray-500 mt-2">
+                  {state.language === 'zh' 
+                    ? "提示：使用 nano-banana 系列通常需要配置第三方 Base URL。"
+                    : "Note: nano-banana models usually require a 3rd party Base URL."}
+                </p>
               </div>
 
               <button 
