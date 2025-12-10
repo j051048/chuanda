@@ -2,6 +2,21 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { OutfitData, Gender, WeatherData, Language, AppSettings } from "../types";
 
+// Helper to map aliases to real model names
+const resolveModelName = (inputModel: string): string => {
+  const m = inputModel.toLowerCase().trim();
+  // Mapping based on user prompt rules
+  if (m === 'nano banana' || m === 'nano-banana' || m === 'gemini flash image') return 'gemini-2.5-flash-image';
+  if (m === 'nano banana pro' || m === 'nano-banana-pro' || m === 'nano banana 2' || m === 'gemini pro image') return 'gemini-3-pro-image-preview';
+  if (m === 'gemini flash') return 'gemini-flash-latest';
+  if (m === 'gemini pro') return 'gemini-3-pro-preview';
+  
+  // Default fallback if empty
+  if (!m) return 'gemini-2.5-flash-image';
+  
+  return inputModel; // Return as-is if no alias matched
+};
+
 // Helper to clean JSON string from markdown code blocks
 const extractJSON = (text: string): any => {
   try {
@@ -65,32 +80,35 @@ const getClient = (settings?: AppSettings) => {
       // Ignore official Google URL to prevent conflicts
       if (!url.includes('generativelanguage.googleapis.com')) {
           
-          // CRITICAL FIX for 3rd Party Proxies (OneAPI/NewAPI)
-          // Scenario: User pastes "https://api.proxy.com/v1" (OpenAI endpoint)
-          // Problem: Google SDK needs "https://api.proxy.com" and appends "/v1beta/..."
-          // If we leave "/v1", SDK requests ".../v1/v1beta/..." -> 404
-          // If we force "v1", requests ".../v1/..." -> Proxy treats as OpenAI -> 400 Bad Request (Invalid Key/Body)
-          
-          // Solution: 
-          // 1. Strip trailing version suffixes (/v1, /v1beta)
-          // 2. Default API version to 'v1beta' (standard for Google Native on proxies)
-          
           // Remove trailing slash first
           if (url.endsWith('/')) url = url.slice(0, -1);
 
+          // Fix for 3rd Party Proxies (OneAPI/NewAPI)
+          // 1. Strip trailing version suffixes (/v1, /v1beta) because SDK appends its own version
+          // 2. Force SDK to use 'v1beta' as most proxies map Google Native there
           if (url.endsWith('/v1')) {
-             url = url.substring(0, url.length - 3); // Remove /v1
-             clientConfig.apiVersion = 'v1beta'; // Force v1beta, as v1 on proxies is usually OpenAI
+             url = url.substring(0, url.length - 3); 
+             clientConfig.apiVersion = 'v1beta'; 
           } else if (url.endsWith('/v1beta')) {
-             url = url.substring(0, url.length - 7); // Remove /v1beta
+             url = url.substring(0, url.length - 7); 
              clientConfig.apiVersion = 'v1beta';
           }
           
-          // Remove trailing slash again if it existed before suffix
+          // Remove trailing slash again
           if (url.endsWith('/')) url = url.slice(0, -1);
           
           clientConfig.baseUrl = url;
       }
+    }
+
+    // 4. Inject Authorization header for proxies if in custom mode
+    if (settings?.mode === 'custom' && settings.apiKey) {
+        let key = settings.apiKey.trim();
+        if (key.toLowerCase().startsWith('bearer ')) key = key.substring(7).trim();
+        
+        clientConfig.customHeaders = {
+            'Authorization': `Bearer ${key}`
+        };
     }
 
     return new GoogleGenAI(clientConfig);
@@ -110,11 +128,11 @@ export const testConnection = async (settings: AppSettings): Promise<{ success: 
     await ai.models.generateContent({
       model: "gemini-2.5-flash", 
       contents: "Hi",
-    });
+    }); 
+
     return { success: true, message: "Connection Successful!" };
   } catch (e: any) {
     console.error("Connection Test Error:", e);
-    
     let msg = e.message || "Unknown error";
     
     // Try to parse more details if available
@@ -127,18 +145,13 @@ export const testConnection = async (settings: AppSettings): Promise<{ success: 
        } catch (jsonErr) {}
     }
 
-    // Provide specific hints based on mode and error type
     if (msg.includes("400")) {
         if (settings.mode === 'official') {
             msg = "400 Error. If using a 3rd party key, switch to 'Custom' tab.";
         } else {
-            msg = "400 Bad Request. Provider might not support Google Native Protocol at this URL. Try removing '/v1' or check Key.";
+            msg = "400 Bad Request. Try checking your Key or Base URL.";
         }
-    } else if (msg.includes("404")) {
-        msg = "404 Not Found. Check Base URL (try removing /v1) or Model Name.";
-    } else if (msg.includes("401") || msg.includes("403")) {
-        msg = "Auth Error. Check your API Key.";
-    }
+    } 
     
     return { success: false, message: msg };
   }
@@ -225,9 +238,9 @@ export const generateCharacterImage = async (
     const ai = getClient(settings);
     if (!ai) return fallbackImage;
   
-    const preferredModel = settings?.imageModel && settings.imageModel.trim() !== "" 
-      ? settings.imageModel 
-      : "gemini-2.5-flash-image";
+    // Resolve alias (e.g., 'nano-banana' -> 'gemini-2.5-flash-image')
+    const userModel = settings?.imageModel || '';
+    const preferredModel = resolveModelName(userModel);
 
     const prompt = `
       High quality 3D cute character, ${gender} college student.
@@ -238,7 +251,7 @@ export const generateCharacterImage = async (
     `;
 
     try {
-        // Attempt 1: User selected model
+        // Attempt 1: Resolved model
         const response = await ai.models.generateContent({
           model: preferredModel,
           contents: prompt,
@@ -246,11 +259,10 @@ export const generateCharacterImage = async (
         return extractImageFromResponse(response);
 
     } catch (firstError: any) {
-        // Handle 404 - Try fallback only if in official mode
-        // In custom mode, 404 means the provider doesn't support the model, fallback to flash-image usually works on proxies too
+        // Handle 404 - If 3rd party, maybe the alias mapping was wrong for their specific system?
+        // But usually, flash-image is safer.
         const is404 = firstError.message?.includes('404') || firstError.status === 404 || firstError.message?.includes('not found') || firstError.message?.includes('NOT_FOUND');
         
-        // If custom mode, try fallback too because 'nano-banana' might be invalid but 'gemini-2.5-flash-image' might work on the proxy
         if (is404) {
             console.warn(`Model '${preferredModel}' failed (404). Retrying with 'gemini-2.5-flash-image'.`);
             const retryResponse = await ai.models.generateContent({
