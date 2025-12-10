@@ -48,13 +48,11 @@ const App: React.FC = () => {
       const saved = localStorage.getItem('uniStyleSettings');
       if (saved) {
         const parsed = JSON.parse(saved);
-        // Ensure mode exists for legacy data
         if (!parsed.mode) parsed.mode = 'official';
         return parsed;
       }
     } catch (e) { console.error(e); }
 
-    // Fallback to environment variable
     let defaultKey = '';
     if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
       defaultKey = process.env.API_KEY;
@@ -236,7 +234,6 @@ const App: React.FC = () => {
     }
   }, [searchInput, state.gender, state.language, state.settings, text.error, text.checkConfig]);
 
-  // Image Refresh Logic
   const handleRefreshImage = async () => {
     if (!state.outfit || !state.weather) return;
     setState(prev => ({ ...prev, isImageLoading: true }));
@@ -252,17 +249,14 @@ const App: React.FC = () => {
     }
   };
 
-  // Initial Load
   useEffect(() => {
     if (!state.settings.apiKey) {
       setState(prev => ({ ...prev, showSettings: true, error: text.configNeeded }));
     } else {
       handleSearch();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); 
 
-  // Handlers
   const toggleLanguage = () => setState(s => ({ ...s, language: s.language === 'zh' ? 'en' : 'zh' }));
   const toggleGender = () => setState(s => ({ ...s, gender: s.gender === 'male' ? 'female' : 'male' }));
   const changeTheme = (theme: Theme) => setState(s => ({ ...s, theme }));
@@ -293,12 +287,14 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className={`min-h-[100dvh] w-full transition-colors duration-500 bg-gradient-to-br ${THEMES[state.theme]} p-4 sm:p-6 lg:p-8 flex flex-col`}>
-      <div className="fixed top-0 left-0 right-0 h-safe-top bg-transparent z-50"></div>
+    <div className={`h-full w-full transition-colors duration-500 bg-gradient-to-br ${THEMES[state.theme]} flex flex-col overflow-hidden relative`}>
+      {/* Top safe area spacing */}
+      <div className="w-full h-safe-top shrink-0"></div>
+
       {state.error && <Toast message={state.error} onClose={clearError} type={state.error.includes('API') || state.error.includes('Error') || state.error.includes('Failed') ? 'error' : 'info'} />}
 
-      {/* --- Header --- */}
-      <header className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-6 z-10 shrink-0">
+      {/* --- Header (Fixed at top) --- */}
+      <header className="flex-none p-4 sm:p-6 lg:p-8 pb-2 flex flex-col sm:flex-row justify-between items-center gap-4 z-10">
         <div className="relative w-full sm:w-80 group order-2 sm:order-1">
           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400"><SearchIcon /></div>
           <input
@@ -330,81 +326,85 @@ const App: React.FC = () => {
         </div>
       </header>
 
-      {/* --- Main Content --- */}
-      {/* Added pb-20 to ensure scrolling space at bottom for mobile */}
-      <main className="flex-1 grid grid-cols-1 lg:grid-cols-12 gap-6 w-full pb-20">
-        {/* Left Column (Text Content) - Mobile Order 2 */}
-        <div className="lg:col-span-5 flex flex-col gap-6 order-2 lg:order-1">
-          {/* Weather Card */}
-          <div className="relative bg-white/40 backdrop-blur-xl border border-white/60 rounded-3xl p-6 shadow-lg animate-fade-in hover:shadow-xl transition-shadow">
-             <div className="flex justify-between items-start">
-               <div>
-                 <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-1">{text.weatherTitle}</h2>
-                 <h1 className="text-3xl font-bold text-gray-800 break-words">{state.weather?.city || '...'}</h1>
-               </div>
-               <div className="text-right flex-shrink-0 ml-2">
-                 <div className="text-4xl font-light text-gray-900">{state.weather?.temp ?? '--'}°</div>
-                 <div className="text-sm text-gray-600">{state.weather?.condition}</div>
-               </div>
-             </div>
-             <div className="mt-4 grid grid-cols-2 gap-2 text-sm text-gray-700 bg-white/30 rounded-xl p-3">
-                <div className="flex items-center gap-2"><span>💧 {text.humidity}: {state.weather?.humidity ?? '--'}%</span></div>
-                <div className="flex items-center gap-2"><span>🌬️ Wind: Low</span></div>
-             </div>
-          </div>
-
-          {/* Outfit Card - Removed fixed height constraints for mobile to allow natural flow */}
-          <div className="w-full bg-white/40 backdrop-blur-xl border border-white/60 rounded-3xl p-6 shadow-lg animate-slide-up hover:shadow-xl transition-shadow flex flex-col justify-center min-h-[250px] lg:flex-1">
-            <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4 border-b border-gray-200/50 pb-2">{text.outfitTitle}</h2>
-            {state.isLoading ? (
-              <div className="flex-1 flex flex-col items-center justify-center space-y-4 opacity-70 py-4">
-                <div className="w-10 h-10 border-4 border-white border-t-transparent rounded-full animate-spin"></div>
-                <p className="text-sm animate-pulse">{text.loading}</p>
+      {/* --- Main Content (Scrollable) --- */}
+      {/* flex-1 overflow-y-auto enables internal scrolling */}
+      <main className="flex-1 overflow-y-auto overflow-x-hidden w-full p-4 sm:p-6 lg:p-8 pt-2 scroll-smooth">
+        <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 pb-24 lg:pb-8">
+          
+          {/* Right Column (Image) - Mobile Order 1 */}
+          {/* On Mobile: Flexible height approx 40vh, but keep aspects reasonable */}
+          <div className="lg:col-span-7 h-[45vh] lg:h-[calc(100vh-140px)] min-h-[300px] order-1 lg:order-2">
+            <div className="w-full h-full relative rounded-3xl overflow-hidden shadow-2xl border-4 border-white/30 backdrop-blur-sm group bg-gray-200/50">
+              <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent z-10 pointer-events-none"></div>
+              {!state.isLoading && state.outfit && (
+                <button onClick={handleRefreshImage} disabled={state.isImageLoading} className="absolute top-4 right-4 z-30 p-2 bg-white/20 backdrop-blur-md border border-white/40 rounded-full text-white hover:bg-white/40 transition-colors shadow-lg disabled:opacity-50">
+                  <div className={`${state.isImageLoading ? 'animate-spin' : ''}`}><RefreshIcon /></div>
+                </button>
+              )}
+              <div className="absolute inset-0 flex items-center justify-center">
+                 {(state.isLoading || state.isImageLoading) && (
+                   <div className="flex flex-col items-center z-20">
+                      <div className="w-16 h-16 border-4 border-white/80 border-t-transparent rounded-full animate-spin mb-4 shadow-lg"></div>
+                      <div className="text-white font-medium text-lg text-shadow-sm animate-pulse">{state.isImageLoading ? text.regenerating : text.loading}</div>
+                   </div>
+                 )}
+                 {!state.isLoading && (
+                   <img src={state.characterImageUrl || `https://picsum.photos/800/1000?random=${state.city}`} alt="Outfit Preview" className={`w-full h-full object-cover object-center transform transition-transform duration-700 ${state.isImageLoading ? 'scale-105 blur-sm' : 'group-hover:scale-105 blur-0'}`} loading="lazy"/>
+                 )}
               </div>
-            ) : state.outfit ? (
-              <div className="space-y-4">
-                <div className="space-y-1"><span className="text-xs font-bold text-gray-500 uppercase">{text.top}</span><p className="text-lg font-medium text-gray-800 leading-snug">{state.outfit.top}</p></div>
-                <div className="space-y-1"><span className="text-xs font-bold text-gray-500 uppercase">{text.bottom}</span><p className="text-lg font-medium text-gray-800 leading-snug">{state.outfit.bottom}</p></div>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-1"><span className="text-xs font-bold text-gray-500 uppercase">{text.shoes}</span><p className="text-base text-gray-800">{state.outfit.shoes}</p></div>
-                  <div className="space-y-1"><span className="text-xs font-bold text-gray-500 uppercase">{text.acc}</span><p className="text-base text-gray-800">{state.outfit.accessories.join(', ')}</p></div>
+              {!state.isLoading && !state.isImageLoading && state.characterImageUrl && (
+                <div className="absolute bottom-6 right-6 z-20 pointer-events-none">
+                   <div className="bg-white/80 backdrop-blur-md px-4 py-2 rounded-full shadow-lg border border-white text-xs font-bold text-gray-800 flex items-center gap-2">
+                     <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                     AI GENERATED
+                   </div>
                 </div>
-                <div className="mt-4 p-3 bg-white/50 rounded-xl border border-white/40"><p className="text-sm text-gray-600 italic">" {state.outfit.reasoning} "</p></div>
-              </div>
-            ) : (<div className="h-40 flex items-center justify-center text-gray-400">Select city...</div>)}
-          </div>
-        </div>
-
-        {/* Right Column (Image) - Mobile Order 1 */}
-        {/* Adjusted Height: 40vh on mobile to save space for text below. Removed strict min-h-320px to allow fitting on small screens if needed, but added reasonable defaults */}
-        <div className="lg:col-span-7 h-[40vh] min-h-[300px] lg:h-auto lg:min-h-[500px] order-1 lg:order-2">
-          <div className="w-full h-full relative rounded-3xl overflow-hidden shadow-2xl border-4 border-white/30 backdrop-blur-sm group bg-gray-200/50">
-            <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent z-10 pointer-events-none"></div>
-            {!state.isLoading && state.outfit && (
-              <button onClick={handleRefreshImage} disabled={state.isImageLoading} className="absolute top-4 right-4 z-30 p-2 bg-white/20 backdrop-blur-md border border-white/40 rounded-full text-white hover:bg-white/40 transition-colors shadow-lg disabled:opacity-50">
-                <div className={`${state.isImageLoading ? 'animate-spin' : ''}`}><RefreshIcon /></div>
-              </button>
-            )}
-            <div className="absolute inset-0 flex items-center justify-center">
-               {(state.isLoading || state.isImageLoading) && (
-                 <div className="flex flex-col items-center z-20">
-                    <div className="w-16 h-16 border-4 border-white/80 border-t-transparent rounded-full animate-spin mb-4 shadow-lg"></div>
-                    <div className="text-white font-medium text-lg text-shadow-sm animate-pulse">{state.isImageLoading ? text.regenerating : text.loading}</div>
-                 </div>
-               )}
-               {!state.isLoading && (
-                 <img src={state.characterImageUrl || `https://picsum.photos/800/1000?random=${state.city}`} alt="Outfit Preview" className={`w-full h-full object-cover object-center transform transition-transform duration-700 ${state.isImageLoading ? 'scale-105 blur-sm' : 'group-hover:scale-105 blur-0'}`} loading="lazy"/>
-               )}
+              )}
             </div>
-            {!state.isLoading && !state.isImageLoading && state.characterImageUrl && (
-              <div className="absolute bottom-6 right-6 z-20 pointer-events-none">
-                 <div className="bg-white/80 backdrop-blur-md px-4 py-2 rounded-full shadow-lg border border-white text-xs font-bold text-gray-800 flex items-center gap-2">
-                   <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-                   AI GENERATED
-                 </div>
-              </div>
-            )}
           </div>
+
+          {/* Left Column (Text Content) - Mobile Order 2 */}
+          <div className="lg:col-span-5 flex flex-col gap-6 order-2 lg:order-1">
+            {/* Weather Card */}
+            <div className="relative bg-white/40 backdrop-blur-xl border border-white/60 rounded-3xl p-6 shadow-lg animate-fade-in hover:shadow-xl transition-shadow">
+               <div className="flex justify-between items-start">
+                 <div>
+                   <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-1">{text.weatherTitle}</h2>
+                   <h1 className="text-3xl font-bold text-gray-800 break-words">{state.weather?.city || '...'}</h1>
+                 </div>
+                 <div className="text-right flex-shrink-0 ml-2">
+                   <div className="text-4xl font-light text-gray-900">{state.weather?.temp ?? '--'}°</div>
+                   <div className="text-sm text-gray-600">{state.weather?.condition}</div>
+                 </div>
+               </div>
+               <div className="mt-4 grid grid-cols-2 gap-2 text-sm text-gray-700 bg-white/30 rounded-xl p-3">
+                  <div className="flex items-center gap-2"><span>💧 {text.humidity}: {state.weather?.humidity ?? '--'}%</span></div>
+                  <div className="flex items-center gap-2"><span>🌬️ Wind: Low</span></div>
+               </div>
+            </div>
+
+            {/* Outfit Card */}
+            <div className="w-full bg-white/40 backdrop-blur-xl border border-white/60 rounded-3xl p-6 shadow-lg animate-slide-up hover:shadow-xl transition-shadow flex flex-col justify-center min-h-[250px] lg:flex-1">
+              <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4 border-b border-gray-200/50 pb-2">{text.outfitTitle}</h2>
+              {state.isLoading ? (
+                <div className="flex-1 flex flex-col items-center justify-center space-y-4 opacity-70 py-4">
+                  <div className="w-10 h-10 border-4 border-white border-t-transparent rounded-full animate-spin"></div>
+                  <p className="text-sm animate-pulse">{text.loading}</p>
+                </div>
+              ) : state.outfit ? (
+                <div className="space-y-4">
+                  <div className="space-y-1"><span className="text-xs font-bold text-gray-500 uppercase">{text.top}</span><p className="text-lg font-medium text-gray-800 leading-snug">{state.outfit.top}</p></div>
+                  <div className="space-y-1"><span className="text-xs font-bold text-gray-500 uppercase">{text.bottom}</span><p className="text-lg font-medium text-gray-800 leading-snug">{state.outfit.bottom}</p></div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1"><span className="text-xs font-bold text-gray-500 uppercase">{text.shoes}</span><p className="text-base text-gray-800">{state.outfit.shoes}</p></div>
+                    <div className="space-y-1"><span className="text-xs font-bold text-gray-500 uppercase">{text.acc}</span><p className="text-base text-gray-800">{state.outfit.accessories.join(', ')}</p></div>
+                  </div>
+                  <div className="mt-4 p-3 bg-white/50 rounded-xl border border-white/40"><p className="text-sm text-gray-600 italic">" {state.outfit.reasoning} "</p></div>
+                </div>
+              ) : (<div className="h-40 flex items-center justify-center text-gray-400">Select city...</div>)}
+            </div>
+          </div>
+
         </div>
       </main>
 
