@@ -34,12 +34,21 @@ const extractJSON = (text: string): any => {
 // Helper to check API Key safely and initialize client with dynamic settings
 const getClient = (settings?: AppSettings) => {
   try {
-    // 1. 优先使用用户设置的 Key
+    // 1. Get raw key from settings or env
     let apiKey = settings?.apiKey;
     
-    // 2. 如果没有用户设置，尝试使用环境变量
-    if (!apiKey && typeof process !== 'undefined') {
+    // Fallback to env if settings key is empty/whitespace
+    if ((!apiKey || apiKey.trim() === '') && typeof process !== 'undefined') {
       apiKey = process.env?.API_KEY;
+    }
+
+    // 2. Sanitize Key (CRITICAL for 400 errors)
+    if (apiKey) {
+      apiKey = apiKey.trim(); // Remove whitespace
+      // Remove common prefixes people copy-paste
+      if (apiKey.toLowerCase().startsWith('bearer ')) {
+        apiKey = apiKey.substring(7).trim();
+      }
     }
 
     if (!apiKey) {

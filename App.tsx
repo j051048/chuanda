@@ -48,7 +48,15 @@ const App: React.FC = () => {
         return JSON.parse(saved);
       }
     } catch (e) { console.error(e); }
-    return { apiKey: '', baseUrl: '', imageModel: 'gemini-2.5-flash-image' };
+
+    // Fallback to environment variable (useful for deployments)
+    let defaultKey = '';
+    // Safety check for process.env
+    if (typeof process !== 'undefined' && process.env && process.env.API_KEY) {
+      defaultKey = process.env.API_KEY;
+    }
+    
+    return { apiKey: defaultKey, baseUrl: '', imageModel: 'gemini-2.5-flash-image' };
   };
 
   // State
@@ -243,7 +251,7 @@ const App: React.FC = () => {
 
   // Initial Load & Config Check
   useEffect(() => {
-    // If no API Key configured, don't run search, just open settings
+    // Check if key exists (either from localStorage or ENV)
     if (!state.settings.apiKey) {
       setState(prev => ({ 
         ...prev, 
@@ -267,11 +275,21 @@ const App: React.FC = () => {
   };
   
   const saveSettings = () => {
-    localStorage.setItem('uniStyleSettings', JSON.stringify(tempSettings));
-    setState(s => ({ ...s, settings: tempSettings, showSettings: false }));
-    // Trigger search with new settings
+    // Strict sanitization before saving
+    const sanitizedKey = tempSettings.apiKey.trim().replace(/^Bearer\s+/i, '');
+    
+    const sanitizedSettings = {
+      ...tempSettings,
+      apiKey: sanitizedKey
+    };
+
+    localStorage.setItem('uniStyleSettings', JSON.stringify(sanitizedSettings));
+    
+    setState(s => ({ ...s, settings: sanitizedSettings, showSettings: false }));
+    
+    // Trigger search with new settings if we have context
     if (state.weather || searchInput) {
-      handleSearch(tempSettings);
+      handleSearch(sanitizedSettings);
     }
   };
 
