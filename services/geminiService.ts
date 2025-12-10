@@ -60,15 +60,14 @@ const getClient = (settings?: AppSettings) => {
     // 构造配置对象
     const clientConfig: any = { apiKey };
     
-    // 3. 处理 Base URL
-    if (settings?.baseUrl && settings.baseUrl.trim() !== "") {
+    // 3. 处理 Base URL (Strict Mode Logic)
+    // ONLY use Base URL if mode is 'custom'. If 'official', keep it undefined.
+    if (settings?.mode === 'custom' && settings?.baseUrl && settings.baseUrl.trim() !== "") {
       let url = settings.baseUrl.trim();
       
-      // CRITICAL FIX: If user pastes the OFFICIAL Google URL, ignore it.
-      // The SDK handles official endpoints better by default. 
-      // Manually setting it often causes double-pathing (e.g. /v1beta/v1beta).
+      // Safety check: even in custom mode, if user puts official URL, ignore it to prevent path errors
       if (url.includes('generativelanguage.googleapis.com')) {
-         // Do nothing, let SDK use default
+         // Do nothing
       } else {
           // Remove trailing slash
           if (url.endsWith('/')) {
@@ -89,7 +88,7 @@ const getClient = (settings?: AppSettings) => {
   }
 };
 
-// NEW: Test connection function
+// Test connection function
 export const testConnection = async (settings: AppSettings): Promise<{ success: boolean; message: string }> => {
   try {
     const ai = getClient(settings);
@@ -103,8 +102,12 @@ export const testConnection = async (settings: AppSettings): Promise<{ success: 
     return { success: true, message: "Connection Successful!" };
   } catch (e: any) {
     let msg = e.message || "Unknown error";
-    if (msg.includes("400")) msg = "400 Invalid Key. If using a 3rd party key, you MUST set the Base URL.";
-    if (msg.includes("404")) msg = "404 Not Found. Check Base URL.";
+    // Provide specific hints based on mode
+    if (msg.includes("400")) {
+        if (settings.mode === 'official') msg = "400 Error. Your Key might be a 3rd party key? Try switching to 'Custom' tab.";
+        else msg = "400 Invalid Key. Check if Base URL is correct for your provider.";
+    }
+    if (msg.includes("404")) msg = "404 Not Found. Check Base URL or Model Name.";
     return { success: false, message: msg };
   }
 };
@@ -212,8 +215,8 @@ export const generateCharacterImage = async (
         return extractImageFromResponse(response);
 
     } catch (firstError: any) {
-        // Handle 404 (Not Found) - Try fallback to official ID
-        // This handles cases where user selects "nano-banana" but host only supports "gemini-2.5-flash-image"
+        // Handle 404 - Try fallback to official ID ONLY if in official mode
+        // If in custom mode, 404 likely means the provider doesn't support the model
         const is404 = firstError.message?.includes('404') || firstError.status === 404 || firstError.message?.includes('not found') || firstError.message?.includes('NOT_FOUND');
         const isNotDefault = preferredModel !== 'gemini-2.5-flash-image';
 
@@ -231,7 +234,6 @@ export const generateCharacterImage = async (
 
   } catch (error: any) {
     console.error("Image gen error details:", error);
-    // Propagate error to let UI show it
     throw error;
   }
 };

@@ -19,6 +19,7 @@ export interface OutfitData {
 }
 
 export interface AppSettings {
+  mode: 'official' | 'custom'; // New field
   apiKey: string;
   baseUrl: string;
   imageModel: string;
