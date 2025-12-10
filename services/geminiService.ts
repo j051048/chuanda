@@ -101,13 +101,18 @@ const getClient = (settings?: AppSettings) => {
       }
     }
 
-    // 4. Inject Authorization header for proxies if in custom mode
-    if (settings?.mode === 'custom' && settings.apiKey) {
-        let key = settings.apiKey.trim();
-        if (key.toLowerCase().startsWith('bearer ')) key = key.substring(7).trim();
+    // 4. Inject Authorization header for proxies if in custom mode (Critical for 400 Errors)
+    if (settings?.mode === 'custom' && apiKey) {
+        // Ensure strictly trimmed key
+        const cleanKey = apiKey.trim();
         
-        clientConfig.customHeaders = {
-            'Authorization': `Bearer ${key}`
+        // Configure SDK to send custom headers on EVERY request
+        // This is necessary because many proxies ignore x-goog-api-key and require Authorization
+        clientConfig.requestOptions = {
+            customHeaders: {
+                'Authorization': `Bearer ${cleanKey}`,
+                'Content-Type': 'application/json'
+            }
         };
     }
 
@@ -149,7 +154,7 @@ export const testConnection = async (settings: AppSettings): Promise<{ success: 
         if (settings.mode === 'official') {
             msg = "400 Error. If using a 3rd party key, switch to 'Custom' tab.";
         } else {
-            msg = "400 Bad Request. Try checking your Key or Base URL.";
+            msg = "400 Bad Request. Checked: Authorization Header injected. Verify Key/URL.";
         }
     } 
     
