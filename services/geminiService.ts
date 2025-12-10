@@ -1,16 +1,30 @@
-import { GoogleGenAI, Type } from "@google/genai";
-import { OutfitData, Gender, WeatherData, Language } from "../types";
 
-// Helper to check API Key safely
-const getClient = () => {
+import { GoogleGenAI, Type } from "@google/genai";
+import { OutfitData, Gender, WeatherData, Language, AppSettings } from "../types";
+
+// Helper to check API Key safely and initialize client with dynamic settings
+const getClient = (settings?: AppSettings) => {
   try {
-    // Ensure process.env exists
-    const apiKey = typeof process !== 'undefined' ? process.env?.API_KEY : undefined;
+    // 1. 优先使用用户设置的 Key
+    let apiKey = settings?.apiKey;
+    
+    // 2. 如果没有用户设置，尝试使用环境变量
+    if (!apiKey && typeof process !== 'undefined') {
+      apiKey = process.env?.API_KEY;
+    }
+
     if (!apiKey) {
       console.warn("API Key missing. Using fallback mode.");
       return null;
     }
-    return new GoogleGenAI({ apiKey });
+
+    // 构造配置对象，如果有 baseUrl 则传入
+    const clientConfig: any = { apiKey };
+    if (settings?.baseUrl && settings.baseUrl.trim() !== "") {
+      clientConfig.baseUrl = settings.baseUrl;
+    }
+
+    return new GoogleGenAI(clientConfig);
   } catch (e) {
     console.warn("Failed to initialize AI client:", e);
     return null;
@@ -20,7 +34,8 @@ const getClient = () => {
 export const generateOutfitAdvice = async (
   weather: WeatherData,
   gender: Gender,
-  language: Language
+  language: Language,
+  settings?: AppSettings
 ): Promise<OutfitData> => {
   const fallbackData: OutfitData = {
     top: gender === 'male' ? "Classic White T-Shirt" : "Floral Blouse",
@@ -28,12 +43,12 @@ export const generateOutfitAdvice = async (
     shoes: "White Canvas Sneakers",
     accessories: ["Canvas Tote Bag", "Simple Watch"],
     reasoning: language === 'zh' 
-      ? "由于网络原因，为您推荐这套经典百搭的舒适校园穿搭。" 
-      : "Due to network issues, here is a classic, comfortable campus outfit."
+      ? "由于网络原因或未配置API，为您推荐这套经典百搭的舒适校园穿搭。" 
+      : "Due to network issues or missing API key, here is a classic, comfortable campus outfit."
   };
 
   try {
-    const ai = getClient();
+    const ai = getClient(settings);
     if (!ai) return fallbackData;
 
     const prompt = `
@@ -83,16 +98,22 @@ export const generateOutfitAdvice = async (
 export const generateCharacterImage = async (
   outfit: OutfitData,
   gender: Gender,
-  weather: WeatherData
+  weather: WeatherData,
+  settings?: AppSettings
 ): Promise<string> => {
   // Always return a high quality random placeholder on error or missing key
   const seed = Math.floor(Math.random() * 1000);
   const fallbackImage = `https://picsum.photos/seed/${seed}/800/1000`;
 
   try {
-    const ai = getClient();
+    const ai = getClient(settings);
     if (!ai) return fallbackImage;
   
+    // 使用用户配置的模型，或者默认使用 flash-image
+    const modelName = settings?.imageModel && settings.imageModel.trim() !== "" 
+      ? settings.imageModel 
+      : "gemini-2.5-flash-image";
+
     const prompt = `
       A 3D rendered character design of a cute ${gender} college student.
       Style: Pixar-like, high quality, 3D illustration, soft lighting, vibrant colors.
@@ -104,7 +125,7 @@ export const generateCharacterImage = async (
     `;
 
     const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-image",
+      model: modelName,
       contents: prompt,
     });
 

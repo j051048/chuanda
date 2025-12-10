@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { 
   AppState, 
@@ -6,7 +7,8 @@ import {
   Language, 
   Gender, 
   WeatherData, 
-  OutfitData 
+  OutfitData,
+  AppSettings
 } from './types';
 import { fetchWeather } from './services/weatherService';
 import { generateOutfitAdvice, generateCharacterImage } from './services/geminiService';
@@ -16,14 +18,26 @@ import { Toast } from './components/Toast';
 const SearchIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
 );
-const MaleIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>
+const SettingsIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
 );
-const FemaleIcon = () => (
-  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+const RefreshIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+);
+const CloseIcon = () => (
+  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
 );
 
 const App: React.FC = () => {
+  // Load settings from local storage
+  const loadSettings = (): AppSettings => {
+    try {
+      const saved = localStorage.getItem('uniStyleSettings');
+      if (saved) return JSON.parse(saved);
+    } catch (e) { console.error(e); }
+    return { apiKey: '', baseUrl: '', imageModel: 'gemini-2.5-flash-image' };
+  };
+
   // State
   const [state, setState] = useState<AppState>({
     city: 'Shanghai',
@@ -31,13 +45,19 @@ const App: React.FC = () => {
     outfit: null,
     characterImageUrl: null,
     isLoading: false,
+    isImageLoading: false,
     error: null,
     language: 'zh',
     theme: 'blue',
-    gender: 'female' // Default user identity
+    gender: 'female',
+    showSettings: false,
+    settings: loadSettings()
   });
 
   const [searchInput, setSearchInput] = useState('Shanghai');
+
+  // Temp state for settings inputs
+  const [tempSettings, setTempSettings] = useState<AppSettings>(state.settings);
 
   // Translations
   const t = {
@@ -55,7 +75,14 @@ const App: React.FC = () => {
       male: '男生',
       female: '女生',
       copy: '一键复制',
-      error: '出错了，请稍后再试'
+      error: '出错了，请稍后再试',
+      settings: '设置',
+      apiKey: 'API Key (Google/第三方)',
+      baseUrl: 'Base URL (可选, 默认官方)',
+      model: '绘画模型 (默认: gemini-2.5-flash-image)',
+      save: '保存并应用',
+      refreshImage: '刷新形象',
+      regenerating: '重绘中...'
     },
     en: {
       searchPlaceholder: 'Enter city (e.g., Shanghai)',
@@ -71,27 +98,35 @@ const App: React.FC = () => {
       male: 'Him',
       female: 'Her',
       copy: 'Copy',
-      error: 'Something went wrong'
+      error: 'Something went wrong',
+      settings: 'Settings',
+      apiKey: 'API Key (Google/Third Party)',
+      baseUrl: 'Base URL (Optional)',
+      model: 'Image Model (Default: gemini-2.5-flash-image)',
+      save: 'Save & Apply',
+      refreshImage: 'Refresh Look',
+      regenerating: 'Redrawing...'
     }
   };
 
   const text = t[state.language];
 
-  // Core Logic
-  const handleSearch = useCallback(async () => {
+  // Core Logic - Full Search
+  const handleSearch = useCallback(async (customSettings?: AppSettings) => {
     if (!searchInput.trim()) return;
 
     setState(prev => ({ ...prev, isLoading: true, error: null }));
+    const currentSettings = customSettings || state.settings;
 
     try {
       // 1. Get Weather
       const weatherData = await fetchWeather(searchInput);
       
       // 2. Get Outfit Text
-      const outfitData = await generateOutfitAdvice(weatherData, state.gender, state.language);
+      const outfitData = await generateOutfitAdvice(weatherData, state.gender, state.language, currentSettings);
       
       // 3. Get Outfit Image
-      const imageUrl = await generateCharacterImage(outfitData, state.gender, weatherData);
+      const imageUrl = await generateCharacterImage(outfitData, state.gender, weatherData, currentSettings);
 
       setState(prev => ({
         ...prev,
@@ -105,7 +140,6 @@ const App: React.FC = () => {
     } catch (err: any) {
       console.error(err);
       let errorMessage = text.error;
-      // Show specific error for "City not found"
       if (err.message && (err.message.includes('City not found') || err.message.includes('unavailable'))) {
         errorMessage = state.language === 'zh' ? '未找到该城市或网络错误' : 'City not found or network error';
       }
@@ -116,19 +150,53 @@ const App: React.FC = () => {
         error: errorMessage 
       }));
     }
-  }, [searchInput, state.gender, state.language, text.error]);
+  }, [searchInput, state.gender, state.language, state.settings, text.error]);
+
+  // Image Refresh Logic
+  const handleRefreshImage = async () => {
+    if (!state.outfit || !state.weather) return;
+    
+    setState(prev => ({ ...prev, isImageLoading: true }));
+
+    try {
+      // Force refresh by calling service again (random seed is internal or handled by model variation)
+      const imageUrl = await generateCharacterImage(state.outfit, state.gender, state.weather, state.settings);
+      
+      setState(prev => ({
+        ...prev,
+        characterImageUrl: imageUrl,
+        isImageLoading: false
+      }));
+    } catch (e) {
+      console.error(e);
+      setState(prev => ({ ...prev, isImageLoading: false, error: 'Image refresh failed' }));
+    }
+  };
 
   // Initial Load
   useEffect(() => {
     handleSearch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Run once on mount
+  }, []); 
 
   // Handlers
   const toggleLanguage = () => setState(s => ({ ...s, language: s.language === 'zh' ? 'en' : 'zh' }));
   const toggleGender = () => setState(s => ({ ...s, gender: s.gender === 'male' ? 'female' : 'male' }));
   const changeTheme = (theme: Theme) => setState(s => ({ ...s, theme }));
   const clearError = () => setState(s => ({ ...s, error: null }));
+  const toggleSettings = () => {
+    setTempSettings(state.settings); // Reset temp to current on open
+    setState(s => ({ ...s, showSettings: !s.showSettings }));
+  };
+  
+  const saveSettings = () => {
+    localStorage.setItem('uniStyleSettings', JSON.stringify(tempSettings));
+    setState(s => ({ ...s, settings: tempSettings, showSettings: false }));
+    // Optional: trigger search again with new settings if we have a city
+    if (state.weather) {
+      handleSearch(tempSettings);
+    }
+  };
 
   return (
     <div className={`min-h-screen w-full transition-colors duration-500 bg-gradient-to-br ${THEMES[state.theme]} p-4 sm:p-6 lg:p-8 flex flex-col`}>
@@ -141,7 +209,7 @@ const App: React.FC = () => {
       <header className="flex flex-col sm:flex-row justify-between items-center gap-4 mb-6 z-10">
         
         {/* Search Bar */}
-        <div className="relative w-full sm:w-80 group">
+        <div className="relative w-full sm:w-80 group order-2 sm:order-1">
           <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
             <SearchIcon />
           </div>
@@ -154,43 +222,53 @@ const App: React.FC = () => {
             className="w-full pl-10 pr-4 py-3 rounded-2xl bg-white/40 backdrop-blur-md border border-white/50 focus:outline-none focus:ring-2 focus:ring-white/50 shadow-sm transition-all text-gray-800 placeholder-gray-500"
           />
           <button 
-            onClick={handleSearch}
+            onClick={() => handleSearch()}
             className="absolute inset-y-1 right-1 px-4 rounded-xl bg-white/60 hover:bg-white text-gray-700 text-sm font-medium transition-colors shadow-sm"
           >
             Go
           </button>
         </div>
 
-        {/* Controls */}
-        <div className="flex items-center gap-3 bg-white/30 backdrop-blur-md px-4 py-2 rounded-2xl border border-white/40 shadow-sm overflow-x-auto max-w-full">
-          {/* Gender */}
-          <button onClick={toggleGender} className="p-2 rounded-full hover:bg-white/50 transition-colors text-gray-700 active:scale-95">
-             <span className="font-bold text-sm">{state.gender === 'male' ? '♂' : '♀'}</span>
-          </button>
-          
-          <div className="w-px h-4 bg-gray-400/30 mx-1"></div>
+        {/* Right Controls */}
+        <div className="flex items-center gap-3 order-1 sm:order-2 w-full sm:w-auto justify-end">
+          <div className="flex items-center gap-3 bg-white/30 backdrop-blur-md px-4 py-2 rounded-2xl border border-white/40 shadow-sm overflow-x-auto">
+            {/* Gender */}
+            <button onClick={toggleGender} className="p-2 rounded-full hover:bg-white/50 transition-colors text-gray-700 active:scale-95">
+              <span className="font-bold text-sm">{state.gender === 'male' ? '♂' : '♀'}</span>
+            </button>
+            
+            <div className="w-px h-4 bg-gray-400/30 mx-1"></div>
 
-          {/* Lang */}
-          <button onClick={toggleLanguage} className="p-2 rounded-full hover:bg-white/50 transition-colors text-xs font-bold text-gray-700 uppercase">
-            {state.language}
-          </button>
+            {/* Lang */}
+            <button onClick={toggleLanguage} className="p-2 rounded-full hover:bg-white/50 transition-colors text-xs font-bold text-gray-700 uppercase">
+              {state.language}
+            </button>
 
-          <div className="w-px h-4 bg-gray-400/30 mx-1"></div>
+            <div className="w-px h-4 bg-gray-400/30 mx-1"></div>
 
-          {/* Theme Dots */}
-          <div className="flex gap-2">
-            {(['blue', 'green', 'pink', 'purple'] as Theme[]).map(t => (
-              <button
-                key={t}
-                onClick={() => changeTheme(t)}
-                className={`w-5 h-5 rounded-full border-2 border-white shadow-sm transition-transform active:scale-90 ${
-                  t === 'blue' ? 'bg-blue-400' :
-                  t === 'green' ? 'bg-emerald-400' :
-                  t === 'pink' ? 'bg-rose-400' : 'bg-purple-400'
-                } ${state.theme === t ? 'ring-2 ring-gray-400 scale-110' : ''}`}
-              />
-            ))}
+            {/* Theme Dots */}
+            <div className="flex gap-2">
+              {(['blue', 'green', 'pink', 'purple'] as Theme[]).map(t => (
+                <button
+                  key={t}
+                  onClick={() => changeTheme(t)}
+                  className={`w-5 h-5 rounded-full border-2 border-white shadow-sm transition-transform active:scale-90 ${
+                    t === 'blue' ? 'bg-blue-400' :
+                    t === 'green' ? 'bg-emerald-400' :
+                    t === 'pink' ? 'bg-rose-400' : 'bg-purple-400'
+                  } ${state.theme === t ? 'ring-2 ring-gray-400 scale-110' : ''}`}
+                />
+              ))}
+            </div>
           </div>
+
+          {/* Settings Button */}
+          <button 
+            onClick={toggleSettings}
+            className="p-3 bg-white/30 backdrop-blur-md rounded-2xl border border-white/40 shadow-sm hover:bg-white/50 transition-colors text-gray-700"
+          >
+            <SettingsIcon />
+          </button>
         </div>
       </header>
 
@@ -224,11 +302,11 @@ const App: React.FC = () => {
           </div>
 
           {/* Outfit Recommendations */}
-          <div className="flex-1 bg-white/40 backdrop-blur-xl border border-white/60 rounded-3xl p-6 shadow-lg animate-slide-up hover:shadow-xl transition-shadow flex flex-col justify-center">
+          <div className="flex-1 bg-white/40 backdrop-blur-xl border border-white/60 rounded-3xl p-6 shadow-lg animate-slide-up hover:shadow-xl transition-shadow flex flex-col justify-center min-h-[300px]">
             <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4 border-b border-gray-200/50 pb-2">{text.outfitTitle}</h2>
             
             {state.isLoading ? (
-              <div className="flex-1 flex flex-col items-center justify-center space-y-4 opacity-70 min-h-[200px]">
+              <div className="flex-1 flex flex-col items-center justify-center space-y-4 opacity-70">
                 <div className="w-10 h-10 border-4 border-white border-t-transparent rounded-full animate-spin"></div>
                 <p className="text-sm animate-pulse">{text.loading}</p>
               </div>
@@ -265,37 +343,122 @@ const App: React.FC = () => {
 
         {/* Right Column (Character Visual) */}
         <div className="lg:col-span-7 h-[50vh] lg:h-auto min-h-[400px] order-1 lg:order-2">
-          <div className="w-full h-full relative rounded-3xl overflow-hidden shadow-2xl border-4 border-white/30 backdrop-blur-sm group">
+          <div className="w-full h-full relative rounded-3xl overflow-hidden shadow-2xl border-4 border-white/30 backdrop-blur-sm group bg-gray-200/50">
             {/* Background Decor */}
-            <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent z-10"></div>
+            <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent z-10 pointer-events-none"></div>
             
+            {/* Refresh Button - Only visible if we have data */}
+            {!state.isLoading && state.outfit && (
+              <button 
+                onClick={handleRefreshImage}
+                disabled={state.isImageLoading}
+                className="absolute top-4 right-4 z-30 p-2 bg-white/20 backdrop-blur-md border border-white/40 rounded-full text-white hover:bg-white/40 transition-colors shadow-lg disabled:opacity-50"
+                title={text.refreshImage}
+              >
+                <div className={`${state.isImageLoading ? 'animate-spin' : ''}`}>
+                   <RefreshIcon />
+                </div>
+              </button>
+            )}
+
             {/* Character Image */}
-            <div className="absolute inset-0 bg-gray-200 flex items-center justify-center">
-               {state.isLoading ? (
-                 <div className="animate-pulse flex flex-col items-center">
-                    <div className="w-20 h-20 bg-gray-300 rounded-full mb-4"></div>
-                    <div className="h-4 w-32 bg-gray-300 rounded"></div>
+            <div className="absolute inset-0 flex items-center justify-center">
+               {state.isLoading || state.isImageLoading ? (
+                 <div className="flex flex-col items-center z-20">
+                    <div className="w-16 h-16 border-4 border-white/80 border-t-transparent rounded-full animate-spin mb-4 shadow-lg"></div>
+                    <div className="text-white font-medium text-lg text-shadow-sm animate-pulse">
+                      {state.isImageLoading ? text.regenerating : text.loading}
+                    </div>
                  </div>
-               ) : (
+               ) : null}
+               
+               {/* Show image underneath loader for smooth transition if refreshing, or hide if main loading */}
+               {!state.isLoading && (
                  <img 
                    src={state.characterImageUrl || `https://picsum.photos/800/1000?random=${state.city}`} 
                    alt="Outfit Preview" 
-                   className="w-full h-full object-cover object-center transform transition-transform duration-700 group-hover:scale-105"
+                   className={`w-full h-full object-cover object-center transform transition-transform duration-700 ${state.isImageLoading ? 'scale-105 blur-sm' : 'group-hover:scale-105 blur-0'}`}
                    loading="lazy"
                  />
                )}
             </div>
             
             {/* Interactive Overlay / Badge */}
-            <div className="absolute bottom-6 right-6 z-20">
-               <div className="bg-white/80 backdrop-blur-md px-4 py-2 rounded-full shadow-lg border border-white text-xs font-bold text-gray-800 flex items-center gap-2">
-                 <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-                 AI GENERATED
-               </div>
-            </div>
+            {!state.isLoading && !state.isImageLoading && state.characterImageUrl && (
+              <div className="absolute bottom-6 right-6 z-20 pointer-events-none">
+                 <div className="bg-white/80 backdrop-blur-md px-4 py-2 rounded-full shadow-lg border border-white text-xs font-bold text-gray-800 flex items-center gap-2">
+                   <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                   AI GENERATED
+                 </div>
+              </div>
+            )}
           </div>
         </div>
       </main>
+
+      {/* --- Settings Modal --- */}
+      {state.showSettings && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm transition-opacity" onClick={toggleSettings}></div>
+          <div className="bg-white/90 backdrop-blur-xl rounded-3xl shadow-2xl w-full max-w-md p-6 relative animate-slide-up border border-white/50">
+            <button onClick={toggleSettings} className="absolute top-4 right-4 text-gray-400 hover:text-gray-600">
+              <CloseIcon />
+            </button>
+            
+            <h2 className="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+              <SettingsIcon />
+              {text.settings}
+            </h2>
+
+            <div className="space-y-4">
+              {/* API Key */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{text.apiKey}</label>
+                <input 
+                  type="password" 
+                  value={tempSettings.apiKey}
+                  onChange={e => setTempSettings({...tempSettings, apiKey: e.target.value})}
+                  className="w-full px-4 py-2 rounded-xl bg-gray-50 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                  placeholder="sk-..."
+                />
+              </div>
+
+              {/* Base URL */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{text.baseUrl}</label>
+                <input 
+                  type="text" 
+                  value={tempSettings.baseUrl}
+                  onChange={e => setTempSettings({...tempSettings, baseUrl: e.target.value})}
+                  className="w-full px-4 py-2 rounded-xl bg-gray-50 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                  placeholder="https://generativelanguage.googleapis.com"
+                />
+              </div>
+
+              {/* Model */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{text.model}</label>
+                <input 
+                  type="text" 
+                  value={tempSettings.imageModel}
+                  onChange={e => setTempSettings({...tempSettings, imageModel: e.target.value})}
+                  className="w-full px-4 py-2 rounded-xl bg-gray-50 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                  placeholder="gemini-2.5-flash-image"
+                />
+                <p className="text-xs text-gray-500 mt-1">推荐使用 Flash Image (Nano Banana) 系列，速度快且免费额度高。</p>
+              </div>
+
+              <button 
+                onClick={saveSettings}
+                className="w-full mt-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium shadow-lg shadow-blue-500/30 transition-all active:scale-95"
+              >
+                {text.save}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };
