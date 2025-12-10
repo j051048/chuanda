@@ -65,20 +65,29 @@ const getClient = (settings?: AppSettings) => {
       // Ignore official Google URL to prevent conflicts
       if (!url.includes('generativelanguage.googleapis.com')) {
           
-          // CRITICAL FIX: Detect version from URL suffix
-          // Many 3rd party providers (OneAPI) expect 'v1' but SDK defaults to 'v1beta'
-          if (url.endsWith('/v1') || url.endsWith('/v1/')) {
-            clientConfig.apiVersion = 'v1'; // Force SDK to use v1
-            url = url.replace(/\/v1\/?$/, ''); // Strip it from base
-          } else if (url.endsWith('/v1beta') || url.endsWith('/v1beta/')) {
-            clientConfig.apiVersion = 'v1beta'; // Force SDK to use v1beta
-            url = url.replace(/\/v1beta\/?$/, ''); // Strip it from base
-          }
+          // CRITICAL FIX for 3rd Party Proxies (OneAPI/NewAPI)
+          // Scenario: User pastes "https://api.proxy.com/v1" (OpenAI endpoint)
+          // Problem: Google SDK needs "https://api.proxy.com" and appends "/v1beta/..."
+          // If we leave "/v1", SDK requests ".../v1/v1beta/..." -> 404
+          // If we force "v1", requests ".../v1/..." -> Proxy treats as OpenAI -> 400 Bad Request (Invalid Key/Body)
+          
+          // Solution: 
+          // 1. Strip trailing version suffixes (/v1, /v1beta)
+          // 2. Default API version to 'v1beta' (standard for Google Native on proxies)
+          
+          // Remove trailing slash first
+          if (url.endsWith('/')) url = url.slice(0, -1);
 
-          // Clean trailing slash
-          if (url.endsWith('/')) {
-            url = url.slice(0, -1);
+          if (url.endsWith('/v1')) {
+             url = url.substring(0, url.length - 3); // Remove /v1
+             clientConfig.apiVersion = 'v1beta'; // Force v1beta, as v1 on proxies is usually OpenAI
+          } else if (url.endsWith('/v1beta')) {
+             url = url.substring(0, url.length - 7); // Remove /v1beta
+             clientConfig.apiVersion = 'v1beta';
           }
+          
+          // Remove trailing slash again if it existed before suffix
+          if (url.endsWith('/')) url = url.slice(0, -1);
           
           clientConfig.baseUrl = url;
       }
@@ -104,16 +113,33 @@ export const testConnection = async (settings: AppSettings): Promise<{ success: 
     });
     return { success: true, message: "Connection Successful!" };
   } catch (e: any) {
+    console.error("Connection Test Error:", e);
+    
     let msg = e.message || "Unknown error";
-    // Provide specific hints based on mode
+    
+    // Try to parse more details if available
+    if (e.response) {
+       try {
+         const errBody = await e.response.json();
+         if (errBody.error && errBody.error.message) {
+            msg = `${e.status} ${errBody.error.message}`;
+         }
+       } catch (jsonErr) {}
+    }
+
+    // Provide specific hints based on mode and error type
     if (msg.includes("400")) {
         if (settings.mode === 'official') {
             msg = "400 Error. If using a 3rd party key, switch to 'Custom' tab.";
         } else {
-            msg = "400 Invalid Key. Try adding '/v1' to your Base URL if your provider uses OneAPI.";
+            msg = "400 Bad Request. Provider might not support Google Native Protocol at this URL. Try removing '/v1' or check Key.";
         }
+    } else if (msg.includes("404")) {
+        msg = "404 Not Found. Check Base URL (try removing /v1) or Model Name.";
+    } else if (msg.includes("401") || msg.includes("403")) {
+        msg = "Auth Error. Check your API Key.";
     }
-    if (msg.includes("404")) msg = "404 Not Found. Check Base URL or Model Name.";
+    
     return { success: false, message: msg };
   }
 };
