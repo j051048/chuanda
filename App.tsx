@@ -11,7 +11,7 @@ import {
   AppSettings
 } from './types';
 import { fetchWeather } from './services/weatherService';
-import { generateOutfitAdvice, generateCharacterImage } from './services/geminiService';
+import { generateOutfitAdvice, generateCharacterImage, testConnection } from './services/geminiService';
 import { Toast } from './components/Toast';
 
 // Icons
@@ -26,6 +26,9 @@ const RefreshIcon = () => (
 );
 const CloseIcon = () => (
   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+);
+const CheckIcon = () => (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
 );
 
 // Models configuration
@@ -79,6 +82,8 @@ const App: React.FC = () => {
 
   // Temp state for settings inputs
   const [tempSettings, setTempSettings] = useState<AppSettings>(state.settings);
+  const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'success' | 'fail'>('idle');
+  const [testMsg, setTestMsg] = useState('');
 
   // Translations
   const t = {
@@ -107,7 +112,10 @@ const App: React.FC = () => {
       configNeeded: '请先配置 API Key 以使用 AI 功能',
       checkConfig: 'AI 调用失败，请检查设置',
       useOfficial: '恢复默认 (Google 官方)',
-      customConfig: '自定义 / 第三方配置'
+      testConn: '测试连接',
+      testSuccess: '连接成功',
+      testFail: '连接失败',
+      baseUrlWarn: '⚠️ 使用第三方模型/Key时，必须填写 Base URL'
     },
     en: {
       searchPlaceholder: 'Enter city (e.g., Shanghai)',
@@ -134,7 +142,10 @@ const App: React.FC = () => {
       configNeeded: 'Please configure API Key to use AI features',
       checkConfig: 'AI call failed, please check settings',
       useOfficial: 'Reset to Default (Official)',
-      customConfig: 'Custom / 3rd Party Config'
+      testConn: 'Test Connection',
+      testSuccess: 'Connected',
+      testFail: 'Failed',
+      baseUrlWarn: '⚠️ Base URL required for 3rd Party Keys'
     }
   };
 
@@ -147,6 +158,14 @@ const App: React.FC = () => {
       baseUrl: '', // Empty means official endpoint
       imageModel: 'gemini-2.5-flash-image'
     }));
+    setTestStatus('idle');
+  };
+
+  const runConnectionTest = async () => {
+    setTestStatus('testing');
+    const res = await testConnection(tempSettings);
+    setTestStatus(res.success ? 'success' : 'fail');
+    setTestMsg(res.message);
   };
 
   // Core Logic - Full Search
@@ -271,12 +290,18 @@ const App: React.FC = () => {
   const clearError = () => setState(s => ({ ...s, error: null }));
   const toggleSettings = () => {
     setTempSettings(state.settings); // Reset temp to current on open
+    setTestStatus('idle'); // Reset test status
     setState(s => ({ ...s, showSettings: !s.showSettings }));
   };
   
   const saveSettings = () => {
     // Strict sanitization before saving
-    const sanitizedKey = tempSettings.apiKey.trim().replace(/^Bearer\s+/i, '');
+    let sanitizedKey = tempSettings.apiKey;
+    if (sanitizedKey) {
+        // Remove invisible chars and newlines
+        sanitizedKey = sanitizedKey.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+        sanitizedKey = sanitizedKey.replace(/^Bearer\s+/i, '');
+    }
     
     const sanitizedSettings = {
       ...tempSettings,
@@ -292,6 +317,12 @@ const App: React.FC = () => {
       handleSearch(sanitizedSettings);
     }
   };
+  
+  // Logic to determine if warning needed
+  const needsBaseUrl = !tempSettings.baseUrl && 
+                       tempSettings.imageModel && 
+                       !tempSettings.imageModel.startsWith('gemini-') &&
+                       !tempSettings.imageModel.startsWith('veo-');
 
   return (
     <div className={`min-h-screen w-full transition-colors duration-500 bg-gradient-to-br ${THEMES[state.theme]} p-4 sm:p-6 lg:p-8 flex flex-col`}>
@@ -521,7 +552,14 @@ const App: React.FC = () => {
 
               {/* API Key */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">{text.apiKey} <span className="text-xs font-normal text-gray-400">(Google / Third-party)</span></label>
+                <label className="block text-sm font-medium text-gray-700 mb-1 flex justify-between">
+                    <span>{text.apiKey} <span className="text-xs font-normal text-gray-400">(Google / Third-party)</span></span>
+                    {tempSettings.apiKey && (
+                        <span className="text-xs text-gray-500 font-mono bg-gray-100 px-1 rounded">
+                            Length: {tempSettings.apiKey.length}
+                        </span>
+                    )}
+                </label>
                 <input 
                   type="password" 
                   value={tempSettings.apiKey}
@@ -538,10 +576,16 @@ const App: React.FC = () => {
                   type="text" 
                   value={tempSettings.baseUrl}
                   onChange={e => setTempSettings({...tempSettings, baseUrl: e.target.value})}
-                  className="w-full px-4 py-2 rounded-xl bg-gray-50 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                  className={`w-full px-4 py-2 rounded-xl bg-gray-50 border focus:outline-none focus:ring-2 focus:ring-blue-500/50 ${needsBaseUrl ? 'border-red-300 ring-2 ring-red-100' : 'border-gray-200'}`}
                   placeholder="https://generativelanguage.googleapis.com"
                 />
-                <p className="text-xs text-gray-400 mt-1">第三方请确保支持 Google 协议 (无需 /v1beta 后缀)</p>
+                
+                {needsBaseUrl && (
+                    <p className="text-xs text-red-500 mt-1 font-bold animate-pulse">{text.baseUrlWarn}</p>
+                )}
+                {!needsBaseUrl && (
+                    <p className="text-xs text-gray-400 mt-1">第三方请确保支持 Google 协议 (无需 /v1beta 后缀)</p>
+                )}
               </div>
 
               {/* Model Selection */}
@@ -564,7 +608,7 @@ const App: React.FC = () => {
                         <span className="font-medium text-sm">{m.name}</span>
                         {tempSettings.imageModel === m.id && (
                           <span className="text-blue-500">
-                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                             <CheckIcon />
                           </span>
                         )}
                       </button>
@@ -585,17 +629,39 @@ const App: React.FC = () => {
                     </div>
                   </div>
                 </div>
-                
-                <p className="text-xs text-gray-500 mt-2">
-                  {state.language === 'zh' 
-                    ? "提示：如果遇到 403 权限错误，请尝试切换其他模型。"
-                    : "Tip: If you get 403 Permission Denied, try switching models."}
-                </p>
+              </div>
+              
+              {/* Test Connection Button */}
+              <div className="pt-2">
+                  <button
+                    onClick={runConnectionTest}
+                    disabled={testStatus === 'testing' || !tempSettings.apiKey}
+                    className={`w-full py-2 rounded-lg text-sm font-medium border flex items-center justify-center gap-2 transition-colors ${
+                        testStatus === 'success' ? 'bg-green-50 text-green-700 border-green-200' :
+                        testStatus === 'fail' ? 'bg-red-50 text-red-700 border-red-200' :
+                        'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+                    }`}
+                  >
+                     {testStatus === 'testing' ? (
+                         <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+                     ) : testStatus === 'success' ? (
+                         <CheckIcon />
+                     ) : (
+                         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                     )}
+                     
+                     {testStatus === 'idle' ? text.testConn : 
+                      testStatus === 'testing' ? 'Testing...' :
+                      testStatus === 'success' ? text.testSuccess : text.testFail}
+                  </button>
+                  {testStatus === 'fail' && (
+                      <p className="text-xs text-red-500 mt-2 text-center">{testMsg}</p>
+                  )}
               </div>
 
               <button 
                 onClick={saveSettings}
-                className="w-full mt-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium shadow-lg shadow-blue-500/30 transition-all active:scale-95"
+                className="w-full mt-2 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-medium shadow-lg shadow-blue-500/30 transition-all active:scale-95"
               >
                 {text.save}
               </button>

@@ -44,7 +44,8 @@ const getClient = (settings?: AppSettings) => {
 
     // 2. Sanitize Key (CRITICAL for 400 errors)
     if (apiKey) {
-      apiKey = apiKey.trim(); // Remove whitespace
+      // Remove invisible characters, newlines, and strict trim
+      apiKey = apiKey.replace(/[\u200B-\u200D\uFEFF]/g, '').trim(); 
       // Remove common prefixes people copy-paste
       if (apiKey.toLowerCase().startsWith('bearer ')) {
         apiKey = apiKey.substring(7).trim();
@@ -62,21 +63,49 @@ const getClient = (settings?: AppSettings) => {
     // 3. 处理 Base URL
     if (settings?.baseUrl && settings.baseUrl.trim() !== "") {
       let url = settings.baseUrl.trim();
-      // Remove trailing slash
-      if (url.endsWith('/')) {
-        url = url.slice(0, -1);
+      
+      // CRITICAL FIX: If user pastes the OFFICIAL Google URL, ignore it.
+      // The SDK handles official endpoints better by default. 
+      // Manually setting it often causes double-pathing (e.g. /v1beta/v1beta).
+      if (url.includes('generativelanguage.googleapis.com')) {
+         // Do nothing, let SDK use default
+      } else {
+          // Remove trailing slash
+          if (url.endsWith('/')) {
+            url = url.slice(0, -1);
+          }
+          // Remove version suffix if user accidentally added it (SDK adds it)
+          if (url.endsWith('/v1beta') || url.endsWith('/v1')) {
+             url = url.replace(/\/v1(beta)?$/, '');
+          }
+          clientConfig.baseUrl = url;
       }
-      // Remove version suffix if user accidentally added it (SDK adds it)
-      if (url.endsWith('/v1beta') || url.endsWith('/v1')) {
-         url = url.replace(/\/v1(beta)?$/, '');
-      }
-      clientConfig.baseUrl = url;
     }
 
     return new GoogleGenAI(clientConfig);
   } catch (e) {
     console.warn("Failed to initialize AI client:", e);
     return null;
+  }
+};
+
+// NEW: Test connection function
+export const testConnection = async (settings: AppSettings): Promise<{ success: boolean; message: string }> => {
+  try {
+    const ai = getClient(settings);
+    if (!ai) return { success: false, message: "API Key missing" };
+    
+    // Simple test query
+    await ai.models.generateContent({
+      model: "gemini-2.5-flash", 
+      contents: "Hi",
+    });
+    return { success: true, message: "Connection Successful!" };
+  } catch (e: any) {
+    let msg = e.message || "Unknown error";
+    if (msg.includes("400")) msg = "400 Invalid Key. If using a 3rd party key, you MUST set the Base URL.";
+    if (msg.includes("404")) msg = "404 Not Found. Check Base URL.";
+    return { success: false, message: msg };
   }
 };
 
