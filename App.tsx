@@ -59,9 +59,9 @@ const App: React.FC = () => {
     }
     
     return { 
-      mode: 'official',
+      mode: 'official', 
       apiKey: defaultKey, 
-      baseUrl: '', 
+      baseUrl: 'https://vip.apiyi.com/', 
       imageModel: 'gemini-2.5-flash-image' 
     };
   };
@@ -431,7 +431,11 @@ const App: React.FC = () => {
                     {text.tabOfficial}
                 </button>
                 <button 
-                    onClick={() => setTempSettings({ ...tempSettings, mode: 'custom' })}
+                    onClick={() => setTempSettings({ 
+                        ...tempSettings, 
+                        mode: 'custom',
+                        baseUrl: tempSettings.baseUrl || 'https://vip.apiyi.com/'
+                    })}
                     className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${tempSettings.mode === 'custom' ? 'bg-white text-purple-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
                 >
                     {text.tabCustom}
