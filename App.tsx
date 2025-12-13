@@ -68,7 +68,7 @@ const App: React.FC = () => {
 
   // State
   const [state, setState] = useState<AppState>({
-    city: 'Shanghai',
+    city: '',
     weather: null,
     outfit: null,
     characterImageUrl: null,
@@ -82,7 +82,7 @@ const App: React.FC = () => {
     settings: loadSettings()
   });
 
-  const [searchInput, setSearchInput] = useState('Shanghai');
+  const [searchInput, setSearchInput] = useState('');
 
   // Temp state for settings inputs
   const [tempSettings, setTempSettings] = useState<AppSettings>(state.settings);
@@ -118,13 +118,14 @@ const App: React.FC = () => {
       testConn: '测试连接',
       testSuccess: '连接成功',
       testFail: '连接失败',
-      tabOfficial: 'Google 官方',
+      tabOfficial: 'FLYDAO 官方',
       tabCustom: '第三方 / 自定义',
-      officialDesc: '直接连接 Google Gemini 官方服务器。稳定性最高。',
+      officialDesc: '由 FLYDAO 提供的免费高速 AI 服务。',
+      officialKeyHint: '默认使用免费 Key。若失效，请在此粘贴您的 API Key (支持 OpenAI 格式)',
       customDesc: '连接第三方中转服务 (OneAPI, GoAmz 等)。需要填写 Base URL。',
       customUrlHint: '必填 (例如: https://api.openai-proxy.com)',
       customModelHint: '手动输入模型名 (如: nano-banana)',
-      officialModel: '官方模型选择',
+      officialModel: '模型选择',
       customModelSelect: '选择或输入模型'
     },
     en: {
@@ -154,13 +155,14 @@ const App: React.FC = () => {
       testConn: 'Test Connection',
       testSuccess: 'Connected',
       testFail: 'Failed',
-      tabOfficial: 'Google Official',
+      tabOfficial: 'FLYDAO Official',
       tabCustom: 'Custom / 3rd Party',
-      officialDesc: 'Connect directly to Google Gemini servers. Best stability.',
+      officialDesc: 'Free high-speed AI service provided by FLYDAO.',
+      officialKeyHint: 'Uses free key by default. Paste your own API Key here to override.',
       customDesc: 'Connect to 3rd party proxies. Base URL is required.',
       customUrlHint: 'Required (e.g. https://api.openai-proxy.com)',
       customModelHint: 'Enter model ID (e.g. nano-banana)',
-      officialModel: 'Official Model',
+      officialModel: 'Model Selection',
       customModelSelect: 'Select or Enter Model'
     }
   };
@@ -250,11 +252,12 @@ const App: React.FC = () => {
   };
 
   useEffect(() => {
-    if (!state.settings.apiKey) {
+    // Only require configuration if in CUSTOM mode and key is missing.
+    // Official mode is free/built-in, so it's always "configured".
+    if (state.settings.mode === 'custom' && !state.settings.apiKey) {
       setState(prev => ({ ...prev, showSettings: true, error: text.configNeeded }));
-    } else {
-      handleSearch();
-    }
+    } 
+    // Removed auto-search call
   }, []); 
 
   const toggleLanguage = () => setState(s => ({ ...s, language: s.language === 'zh' ? 'en' : 'zh' }));
@@ -281,6 +284,7 @@ const App: React.FC = () => {
     localStorage.setItem('uniStyleSettings', JSON.stringify(sanitizedSettings));
     setState(s => ({ ...s, settings: sanitizedSettings, showSettings: false }));
     
+    // Trigger search if we have context
     if (state.weather || searchInput) {
       handleSearch(sanitizedSettings);
     }
@@ -320,7 +324,7 @@ const App: React.FC = () => {
               ))}
             </div>
           </div>
-          <button onClick={toggleSettings} className={`p-3 bg-white/30 backdrop-blur-md rounded-2xl border border-white/40 shadow-sm hover:bg-white/50 transition-colors flex-shrink-0 ${!state.settings.apiKey ? 'ring-2 ring-red-400 text-red-500 animate-pulse' : 'text-gray-700'}`}>
+          <button onClick={toggleSettings} className={`p-3 bg-white/30 backdrop-blur-md rounded-2xl border border-white/40 shadow-sm hover:bg-white/50 transition-colors flex-shrink-0 ${state.settings.mode === 'custom' && !state.settings.apiKey ? 'ring-2 ring-red-400 text-red-500 animate-pulse' : 'text-gray-700'}`}>
             <SettingsIcon />
           </button>
         </div>
@@ -332,7 +336,6 @@ const App: React.FC = () => {
         <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 pb-24 lg:pb-8">
           
           {/* Right Column (Image) - Mobile Order 1 */}
-          {/* On Mobile: Flexible height approx 40vh, but keep aspects reasonable */}
           <div className="lg:col-span-7 h-[45vh] lg:h-[calc(100vh-140px)] min-h-[300px] order-1 lg:order-2">
             <div className="w-full h-full relative rounded-3xl overflow-hidden shadow-2xl border-4 border-white/30 backdrop-blur-sm group bg-gray-200/50">
               <div className="absolute inset-0 bg-gradient-to-t from-black/20 to-transparent z-10 pointer-events-none"></div>
@@ -349,7 +352,7 @@ const App: React.FC = () => {
                    </div>
                  )}
                  {!state.isLoading && (
-                   <img src={state.characterImageUrl || `https://picsum.photos/800/1000?random=${state.city}`} alt="Outfit Preview" className={`w-full h-full object-cover object-center transform transition-transform duration-700 ${state.isImageLoading ? 'scale-105 blur-sm' : 'group-hover:scale-105 blur-0'}`} loading="lazy"/>
+                   <img src={state.characterImageUrl || `https://picsum.photos/800/1000?random=${state.city || 'default'}`} alt="Outfit Preview" className={`w-full h-full object-cover object-center transform transition-transform duration-700 ${state.isImageLoading ? 'scale-105 blur-sm' : 'group-hover:scale-105 blur-0'}`} loading="lazy"/>
                  )}
               </div>
               {!state.isLoading && !state.isImageLoading && state.characterImageUrl && (
@@ -366,21 +369,30 @@ const App: React.FC = () => {
           {/* Left Column (Text Content) - Mobile Order 2 */}
           <div className="lg:col-span-5 flex flex-col gap-6 order-2 lg:order-1">
             {/* Weather Card */}
-            <div className="relative bg-white/40 backdrop-blur-xl border border-white/60 rounded-3xl p-6 shadow-lg animate-fade-in hover:shadow-xl transition-shadow">
-               <div className="flex justify-between items-start">
-                 <div>
-                   <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-1">{text.weatherTitle}</h2>
-                   <h1 className="text-3xl font-bold text-gray-800 break-words">{state.weather?.city || '...'}</h1>
+            <div className="relative bg-white/40 backdrop-blur-xl border border-white/60 rounded-3xl p-6 shadow-lg animate-fade-in hover:shadow-xl transition-shadow min-h-[140px] flex flex-col justify-center">
+               {state.weather ? (
+                 <>
+                   <div className="flex justify-between items-start">
+                     <div>
+                       <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-1">{text.weatherTitle}</h2>
+                       <h1 className="text-3xl font-bold text-gray-800 break-words">{state.weather.city}</h1>
+                     </div>
+                     <div className="text-right flex-shrink-0 ml-2">
+                       <div className="text-4xl font-light text-gray-900">{state.weather.temp}°</div>
+                       <div className="text-sm text-gray-600">{state.weather.condition}</div>
+                     </div>
+                   </div>
+                   <div className="mt-4 grid grid-cols-2 gap-2 text-sm text-gray-700 bg-white/30 rounded-xl p-3">
+                      <div className="flex items-center gap-2"><span>💧 {text.humidity}: {state.weather.humidity}%</span></div>
+                      <div className="flex items-center gap-2"><span>🌬️ Wind: Low</span></div>
+                   </div>
+                 </>
+               ) : (
+                 <div className="flex flex-col items-center justify-center text-gray-500 space-y-2 opacity-60">
+                     <div className="text-4xl">🌤️</div>
+                     <p className="font-medium">{state.language === 'zh' ? '请输入城市查看天气' : 'Enter city to see weather'}</p>
                  </div>
-                 <div className="text-right flex-shrink-0 ml-2">
-                   <div className="text-4xl font-light text-gray-900">{state.weather?.temp ?? '--'}°</div>
-                   <div className="text-sm text-gray-600">{state.weather?.condition}</div>
-                 </div>
-               </div>
-               <div className="mt-4 grid grid-cols-2 gap-2 text-sm text-gray-700 bg-white/30 rounded-xl p-3">
-                  <div className="flex items-center gap-2"><span>💧 {text.humidity}: {state.weather?.humidity ?? '--'}%</span></div>
-                  <div className="flex items-center gap-2"><span>🌬️ Wind: Low</span></div>
-               </div>
+               )}
             </div>
 
             {/* Outfit Card */}
@@ -401,7 +413,7 @@ const App: React.FC = () => {
                   </div>
                   <div className="mt-4 p-3 bg-white/50 rounded-xl border border-white/40"><p className="text-sm text-gray-600 italic">" {state.outfit.reasoning} "</p></div>
                 </div>
-              ) : (<div className="h-40 flex items-center justify-center text-gray-400">Select city...</div>)}
+              ) : (<div className="h-40 flex items-center justify-center text-gray-400">{state.language === 'zh' ? '请搜索城市获取建议' : 'Enter city for suggestions'}</div>)}
             </div>
           </div>
 
@@ -451,19 +463,19 @@ const App: React.FC = () => {
                                 <svg className="w-5 h-5" viewBox="0 0 24 24" fill="currentColor"><path d="M12.545,10.539h-4.09v2.922h4.09c-0.158,1.474-1.393,2.623-2.909,2.623c-1.614,0-2.922-1.309-2.922-2.922 c0-1.614,1.309-2.922,2.922-2.922c0.74,0,1.416,0.278,1.944,0.732l2.094-2.094C12.59,7.925,11.37,7.239,10,7.239 c-3.228,0-5.845,2.617-5.845,5.845s2.617,5.845,5.845,5.845c2.932,0,5.437-2.126,5.845,5.845,5.808-4.99H12.545L12.545,10.539z"/></svg>
                             </div>
                             <div>
-                                <h3 className="text-sm font-bold text-blue-900">Google Official</h3>
+                                <h3 className="text-sm font-bold text-blue-900">FLYDAO Official</h3>
                                 <p className="text-xs text-blue-700 mt-1 leading-relaxed">{text.officialDesc}</p>
                             </div>
                         </div>
 
                         <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">{text.apiKey}</label>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">{text.apiKey} <span className="text-gray-400 font-normal">(Optional)</span></label>
                             <input 
                                 type="password" 
                                 value={tempSettings.apiKey}
                                 onChange={e => setTempSettings({...tempSettings, apiKey: e.target.value})}
                                 className="w-full px-4 py-3 rounded-xl bg-gray-50 border border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
-                                placeholder={process.env.API_KEY ? "Loaded from system environment" : "Paste your Google AI Studio Key"}
+                                placeholder={text.officialKeyHint}
                             />
                             {process.env.API_KEY && !tempSettings.apiKey && (
                                 <p className="text-xs text-green-600 mt-2 flex items-center gap-1">
@@ -570,7 +582,7 @@ const App: React.FC = () => {
                  <div className="mb-3">
                     <button
                         onClick={runConnectionTest}
-                        disabled={testStatus === 'testing' || !tempSettings.apiKey || (tempSettings.mode === 'custom' && !tempSettings.baseUrl)}
+                        disabled={testStatus === 'testing' || (tempSettings.mode === 'custom' && (!tempSettings.apiKey || !tempSettings.baseUrl))}
                         className={`w-full py-2 rounded-lg text-sm font-medium border flex items-center justify-center gap-2 transition-colors ${
                             testStatus === 'success' ? 'bg-green-50 text-green-700 border-green-200' :
                             testStatus === 'fail' ? 'bg-red-50 text-red-700 border-red-200' :
@@ -596,7 +608,7 @@ const App: React.FC = () => {
 
                 <button 
                     onClick={saveSettings}
-                    disabled={tempSettings.mode === 'custom' && !tempSettings.baseUrl}
+                    disabled={tempSettings.mode === 'custom' && (!tempSettings.baseUrl || !tempSettings.apiKey)}
                     className={`w-full py-3 text-white rounded-xl font-medium shadow-lg transition-all active:scale-95 ${
                         tempSettings.mode === 'official' 
                         ? 'bg-blue-600 hover:bg-blue-700 shadow-blue-500/30' 

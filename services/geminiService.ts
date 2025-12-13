@@ -1,6 +1,8 @@
 
-import { GoogleGenAI } from "@google/genai";
 import { OutfitData, Gender, WeatherData, Language, AppSettings } from "../types";
+
+// PROXY CONFIGURATION
+const FLYDAO_PROXY_URL = 'https://proxy-12-13.vercel.app/v1';
 
 // --- Helpers ---
 
@@ -33,60 +35,104 @@ const extractJSON = (text: string): any => {
   }
 };
 
-// Extract image data from standard Google Response structure
-const extractImageFromResponse = (response: any): string => {
-  // Handle SDK response object or Raw JSON response
-  const candidates = response.candidates || response.response?.candidates;
-  
-  if (candidates?.[0]?.content?.parts) {
-    for (const part of candidates[0].content.parts) {
-      if (part.inlineData && part.inlineData.data) {
-         return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
-      }
+// --- API Implementation ---
+
+// 1. OpenAI Protocol (For FLYDAO Official Proxy)
+// The proxy at h5-proxy.vercel.app is an OpenAI-compatible gateway (OneAPI/NewAPI).
+// It requires "messages" for text and "prompt" for images, and a non-empty Auth header.
+
+const fetchOpenAIChat = async (model: string, systemPrompt: string, userPrompt: string, apiKey?: string) => {
+    const endpoint = `${FLYDAO_PROXY_URL}/chat/completions`;
+    const token = apiKey?.trim() || 'sk-flydao';
+    
+    const payload = {
+        model: model,
+        messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt }
+        ],
+        temperature: 0.7
+    };
+
+    const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}` 
+        },
+        body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+        const errText = await response.text();
+        throw new Error(`FLYDAO Chat Error ${response.status}: ${errText.substring(0, 100)}`);
     }
-    const textPart = candidates[0].content.parts.find((p: any) => p.text);
-    if (textPart?.text) {
-      throw new Error(`Model Refused: ${textPart.text.substring(0, 100)}...`);
-    }
-  }
-  throw new Error("Model returned no image data.");
+
+    const json = await response.json();
+    return json.choices?.[0]?.message?.content || "";
 };
 
-// --- Core API Logic ---
+const fetchOpenAIImage = async (model: string, prompt: string, apiKey?: string) => {
+    const endpoint = `${FLYDAO_PROXY_URL}/images/generations`;
+    const token = apiKey?.trim() || 'sk-flydao';
 
-// 1. Official Mode: Use Google SDK
-const callOfficialSdk = async (model: string, contents: any, apiKey: string) => {
-  const ai = new GoogleGenAI({ apiKey });
-  return await ai.models.generateContent({ model, contents });
+    const payload = {
+        model: model, 
+        prompt: prompt,
+        n: 1,
+        size: "1024x1024", // Standard OpenAI param, might be ignored by Gemini backend but required by schema
+        response_format: "b64_json"
+    };
+
+    const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify(payload)
+    });
+
+    if (!response.ok) {
+        // Fallback: If image endpoint fails (404/400), sometimes these proxies allow image gen via Chat
+        // But for now, throw to let the UI handle it.
+        const errText = await response.text();
+        throw new Error(`FLYDAO Image Error ${response.status}: ${errText.substring(0, 100)}`);
+    }
+
+    const json = await response.json();
+    // Support both b64_json (preferred) and url
+    const dataObj = json.data?.[0];
+    if (dataObj?.b64_json) {
+        return `data:image/png;base64,${dataObj.b64_json}`;
+    } else if (dataObj?.url) {
+        return dataObj.url;
+    }
+    throw new Error("No image data in OpenAI response");
 };
 
-// 2. Custom Mode: Use Native Fetch (Fixes 400 errors on proxies)
-const callCustomFetch = async (settings: AppSettings, model: string, contents: any) => {
+
+// 2. Google Native Protocol (For Custom Mode)
+// Users might paste a direct Google API base URL or a Google-compatible proxy.
+const callCustomGoogleFetch = async (settings: AppSettings, model: string, contents: any) => {
   let baseUrl = settings.baseUrl.trim();
   let apiKey = settings.apiKey.trim();
   
-  // Clean Key
   if (apiKey.toLowerCase().startsWith('bearer ')) {
     apiKey = apiKey.substring(7).trim();
   }
 
-  // URL Normalization
-  // If user inputs "https://api.proxy.com/v1", we usually need to strip "/v1" 
-  // and append "/v1beta/models/..." for Google Native format
+  // URL Normalization for Google Native
   if (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1);
-  if (baseUrl.endsWith('/v1')) baseUrl = baseUrl.slice(0, -3); // Strip OpenAI suffix
+  if (baseUrl.endsWith('/v1')) baseUrl = baseUrl.slice(0, -3); 
   if (baseUrl.endsWith('/v1beta')) baseUrl = baseUrl.slice(0, -7);
 
-  // Construct Endpoint
   const endpoint = `${baseUrl}/v1beta/models/${model}:generateContent`;
 
-  // Construct Body (Google Native Format)
-  // contents can be string or object. Convert to array of parts if string.
   let formattedContents = contents;
   if (typeof contents === 'string') {
     formattedContents = { parts: [{ text: contents }] };
   } else if (contents.parts) {
-      // Already formatted object
       formattedContents = contents;
   }
 
@@ -94,12 +140,10 @@ const callCustomFetch = async (settings: AppSettings, model: string, contents: a
     contents: [formattedContents]
   };
 
-  // EXECUTE FETCH
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      // Critical: Proxies identify user via this header, NOT query param
       'Authorization': `Bearer ${apiKey}` 
     },
     body: JSON.stringify(payload)
@@ -117,22 +161,28 @@ const callCustomFetch = async (settings: AppSettings, model: string, contents: a
     throw new Error(errMsg);
   }
 
-  return await response.json();
+  const json = await response.json();
+  
+  // Extract text or image from Google response
+  return json;
 };
 
 // --- Exported Services ---
 
 export const testConnection = async (settings: AppSettings): Promise<{ success: boolean; message: string }> => {
   try {
-    if (!settings.apiKey) return { success: false, message: "API Key missing" };
+    if (settings.mode === 'custom' && !settings.apiKey) {
+        return { success: false, message: "API Key missing" };
+    }
 
     const model = "gemini-2.5-flash";
     const prompt = "Hi";
 
     if (settings.mode === 'custom') {
-      await callCustomFetch(settings, model, prompt);
+      await callCustomGoogleFetch(settings, model, prompt);
     } else {
-      await callOfficialSdk(model, prompt, settings.apiKey);
+      // Official / FLYDAO mode -> OpenAI Protocol
+      await fetchOpenAIChat(model, "You are a helper.", prompt, settings.apiKey);
     }
 
     return { success: true, message: "Connection Successful!" };
@@ -140,9 +190,9 @@ export const testConnection = async (settings: AppSettings): Promise<{ success: 
     console.error("Connection Test Error:", e);
     let msg = e.message || "Unknown error";
     
-    if (msg.includes("404")) msg = "404 Not Found. Check Base URL.";
-    if (msg.includes("401") || msg.includes("403")) msg = "Auth Failed. Check API Key.";
-    if (msg.includes("Failed to fetch")) msg = "Network Error. Check CORS or URL.";
+    if (msg.includes("404")) msg = "404 Not Found. Check URL.";
+    if (msg.includes("401") || msg.includes("403")) msg = "Auth Failed.";
+    if (msg.includes("Failed to fetch")) msg = "Network Error.";
 
     return { success: false, message: msg };
   }
@@ -160,19 +210,19 @@ export const generateOutfitAdvice = async (
     shoes: "White Canvas Sneakers",
     accessories: ["Canvas Tote Bag", "Simple Watch"],
     reasoning: language === 'zh' 
-      ? "由于网络原因或未配置API，为您推荐这套经典百搭的舒适校园穿搭。" 
-      : "Due to network issues or missing API key, here is a classic, comfortable campus outfit."
+      ? "由于网络原因，为您推荐这套经典百搭的舒适校园穿搭。" 
+      : "Due to network issues, here is a classic, comfortable campus outfit."
   };
 
   try {
-    if (!settings?.apiKey) return fallbackData;
+    if (settings?.mode === 'custom' && !settings.apiKey) return fallbackData;
+    if (!settings) return fallbackData;
 
-    const prompt = `
-      You are a trendy fashion stylist.
+    const systemPrompt = "You are a trendy fashion stylist. Return ONLY valid JSON.";
+    const userPrompt = `
       Context: Weather ${weather.temp}°C ${weather.condition}, City ${weather.city}, User ${gender}, Lang ${language}.
       Task: Suggest a stylish outfit.
-      
-      IMPORTANT: Return ONLY valid JSON with this structure, no markdown:
+      Format:
       {
         "top": "string",
         "bottom": "string",
@@ -182,29 +232,22 @@ export const generateOutfitAdvice = async (
       }
     `;
 
-    let response: any;
+    let responseText = "";
+
     if (settings.mode === 'custom') {
-      response = await callCustomFetch(settings, "gemini-2.5-flash", prompt);
+      const json = await callCustomGoogleFetch(settings, "gemini-2.5-flash", userPrompt);
+      const candidates = json.candidates || json.response?.candidates;
+      if (candidates && candidates[0]?.content?.parts?.[0]?.text) {
+        responseText = candidates[0].content.parts[0].text;
+      }
     } else {
-      response = await callOfficialSdk("gemini-2.5-flash", prompt, settings.apiKey);
+      // Official - OpenAI Chat
+      responseText = await fetchOpenAIChat("gemini-2.5-flash", systemPrompt, userPrompt, settings.apiKey);
     }
 
-    // Handle standard Google response text extraction
-    let text = "";
-    const candidates = response.candidates || response.response?.candidates; // Handle SDK vs Raw JSON diffs
-    if (candidates && candidates[0]?.content?.parts?.[0]?.text) {
-        text = candidates[0].content.parts[0].text;
-    } else if (response.text && typeof response.text === 'string') {
-        // SDK property shortcut
-        text = response.text;
-    } else if (typeof response.text === 'function') {
-        // SDK method shortcut (rare in new versions but safe)
-        text = response.text();
-    }
+    if (!responseText) throw new Error("Empty response from AI");
+    return extractJSON(responseText) as OutfitData;
 
-    if (!text) throw new Error("Empty response from AI");
-    
-    return extractJSON(text) as OutfitData;
   } catch (error: any) {
     console.error("Outfit gen error details:", error);
     throw error;
@@ -221,7 +264,8 @@ export const generateCharacterImage = async (
   const fallbackImage = `https://picsum.photos/seed/${seed}/800/1000`;
 
   try {
-    if (!settings?.apiKey) return fallbackImage;
+    if (settings?.mode === 'custom' && !settings.apiKey) return fallbackImage;
+    if (!settings) return fallbackImage;
   
     const userModel = settings?.imageModel || '';
     const preferredModel = resolveModelName(userModel);
@@ -234,31 +278,37 @@ export const generateCharacterImage = async (
       Full body shot.
     `;
 
-    const makeCall = async (modelName: string) => {
-        if (settings.mode === 'custom') {
-            return await callCustomFetch(settings, modelName, prompt);
-        } else {
-            return await callOfficialSdk(modelName, prompt, settings.apiKey);
+    if (settings.mode === 'custom') {
+        // Google Native Protocol
+        const response = await callCustomGoogleFetch(settings, preferredModel, prompt);
+        // Extract Image Logic for Google
+        const candidates = response.candidates || response.response?.candidates;
+        if (candidates?.[0]?.content?.parts) {
+            for (const part of candidates[0].content.parts) {
+                if (part.inlineData && part.inlineData.data) {
+                    return `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+                }
+            }
         }
-    };
-
-    try {
-        const response = await makeCall(preferredModel);
-        return extractImageFromResponse(response);
-    } catch (firstError: any) {
-        // Handle 404/Not Found - Retry with flash-image
-        const msg = firstError.message || '';
-        const is404 = msg.includes('404') || msg.includes('not found') || msg.includes('NOT_FOUND');
-        
-        if (is404) {
-            console.warn(`Model '${preferredModel}' failed (404). Retrying with 'gemini-2.5-flash-image'.`);
-            const retryResponse = await makeCall('gemini-2.5-flash-image');
-            return extractImageFromResponse(retryResponse);
-        }
-        throw firstError;
+        throw new Error("Model returned no image data (Google Protocol).");
+    } else {
+        // Official - OpenAI Image Protocol
+        // Note: For OpenAI proxies mapping to Gemini, we often use dall-e-3 endpoint or chat endpoint.
+        // Based on "Provide prompt for images" error, we use /images/generations.
+        return await fetchOpenAIImage(preferredModel, prompt, settings.apiKey);
     }
+
   } catch (error: any) {
     console.error("Image gen error details:", error);
+    
+    // Fallback logic for Official Mode if specific model fails on Image endpoint
+    if (settings?.mode === 'official' && error.message.includes("404")) {
+         console.warn("Retrying with fallback model via OpenAI protocol...");
+         try {
+             return await fetchOpenAIImage("dall-e-3", `Character: ${gender}, ${outfit.top}`, settings.apiKey);
+         } catch(e) {}
+    }
+    
     throw error;
   }
 };
