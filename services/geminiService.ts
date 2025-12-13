@@ -219,9 +219,15 @@ export const generateOutfitAdvice = async (
     if (!settings) return fallbackData;
 
     const systemPrompt = "You are a trendy fashion stylist. Return ONLY valid JSON.";
+    
+    // STRICT LANGUAGE INSTRUCTION
+    const langInstruction = language === 'zh' 
+        ? "OUTPUT CONTENT MUST BE IN CHINESE (Simplified). Translate all fashion items and reasoning to Chinese." 
+        : "Output content in English.";
+
     const userPrompt = `
       Context: Weather ${weather.temp}°C ${weather.condition}, City ${weather.city}, User ${gender}, Lang ${language}.
-      Task: Suggest a stylish outfit.
+      Task: Suggest a stylish outfit. ${langInstruction}
       Format:
       {
         "top": "string",

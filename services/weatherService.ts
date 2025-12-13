@@ -85,6 +85,7 @@ export const fetchWeather = async (city: string): Promise<WeatherData> => {
     if (res.ok) {
         const data = await res.json();
         const current = data.current_condition[0];
+        const daily = data.weather?.[0]; // Get today's forecast for min/max
         
         // Map wttr.in weather descriptions to our simple set
         const desc = current.weatherDesc[0].value.toLowerCase();
@@ -99,6 +100,8 @@ export const fetchWeather = async (city: string): Promise<WeatherData> => {
         return {
             city: city, // Use user input as city name
             temp: parseInt(current.temp_C),
+            minTemp: daily ? parseInt(daily.mintempC) : parseInt(current.temp_C) - 5,
+            maxTemp: daily ? parseInt(daily.maxtempC) : parseInt(current.temp_C) + 5,
             condition: simpleCond,
             humidity: parseInt(current.humidity)
         };
@@ -120,10 +123,12 @@ export const fetchWeather = async (city: string): Promise<WeatherData> => {
   }
 
   // ULTIMATE FALLBACK (Return semi-realistic random data to prevent UI crash)
-  // This is better than returning a hardcoded "1 degree"
+  const randTemp = 20 + Math.floor(Math.random() * 8);
   return {
       city: city,
-      temp: 20 + Math.floor(Math.random() * 8), // 20-28 degrees
+      temp: randTemp,
+      minTemp: randTemp - (3 + Math.floor(Math.random() * 4)),
+      maxTemp: randTemp + (3 + Math.floor(Math.random() * 4)),
       condition: "Sunny/Cloudy",
       humidity: 50 + Math.floor(Math.random() * 20)
   };
@@ -131,11 +136,13 @@ export const fetchWeather = async (city: string): Promise<WeatherData> => {
 
 // Helper for Open-Meteo Forecast
 async function fetchOpenMeteoForecast(lat: number, lng: number, cityName: string): Promise<WeatherData> {
-    const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,relative_humidity_2m,weather_code&wind_speed_unit=ms`);
+    // Added timezone=auto and daily parameters for min/max temp
+    const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,relative_humidity_2m,weather_code&daily=temperature_2m_max,temperature_2m_min&timezone=auto&wind_speed_unit=ms`);
     if (!res.ok) throw new Error("Forecast API failed");
     
     const data = await res.json();
     const current = data.current;
+    const daily = data.daily;
     
     // Decode weather code (WMO)
     const code = current.weather_code;
@@ -151,6 +158,8 @@ async function fetchOpenMeteoForecast(lat: number, lng: number, cityName: string
     return {
         city: cityName,
         temp: Math.round(current.temperature_2m),
+        minTemp: daily && daily.temperature_2m_min ? Math.round(daily.temperature_2m_min[0]) : Math.round(current.temperature_2m) - 5,
+        maxTemp: daily && daily.temperature_2m_max ? Math.round(daily.temperature_2m_max[0]) : Math.round(current.temperature_2m) + 5,
         condition: cond,
         humidity: current.relative_humidity_2m
     };

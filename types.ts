@@ -5,6 +5,8 @@ export type Theme = 'blue' | 'green' | 'pink' | 'purple';
 
 export interface WeatherData {
   temp: number;
+  minTemp: number; // Added for daily low
+  maxTemp: number; // Added for daily high
   condition: string;
   humidity: number;
   city: string;

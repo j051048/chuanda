@@ -379,7 +379,10 @@ const App: React.FC = () => {
                      </div>
                      <div className="text-right flex-shrink-0 ml-2">
                        <div className="text-4xl font-light text-gray-900">{state.weather.temp}°</div>
-                       <div className="text-sm text-gray-600">{state.weather.condition}</div>
+                       <div className="text-sm font-medium text-gray-600 mt-1 whitespace-nowrap">
+                         H: {state.weather.maxTemp}°  L: {state.weather.minTemp}°
+                       </div>
+                       <div className="text-sm text-gray-600 mt-1">{state.weather.condition}</div>
                      </div>
                    </div>
                    <div className="mt-4 grid grid-cols-2 gap-2 text-sm text-gray-700 bg-white/30 rounded-xl p-3">
